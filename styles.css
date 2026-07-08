@@ -183,6 +183,16 @@
 	max-height: 340px;
 	background-color: var(--background-secondary);
 	border-radius: var(--radius-s);
+	/* uncolored canvas nodes use currentColor */
+	color: var(--text-faint);
+}
+
+.drawer-explorer-canvas-svg line {
+	stroke: var(--background-modifier-border);
+}
+
+.drawer-explorer-canvas-svg text {
+	fill: var(--text-muted);
 }
 
 .drawer-explorer-base-heading {

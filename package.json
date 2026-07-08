@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-drawer-explorer",
-	"version": "0.2.0",
+	"version": "0.2.1",
 	"description": "Pop-up file tree with modal vim-style navigation and rich previews for Obsidian",
 	"main": "main.js",
 	"repository": {
@@ -14,8 +14,8 @@
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-		"install:vault": "cp manifest.json main.js styles.css \"$OBSIDIAN_PLUGIN_DIR\"",
-		"install:fluz": "sh ./install-local.sh"
+		"lint": "eslint src/",
+		"install:vault": "cp manifest.json main.js styles.css \"$OBSIDIAN_PLUGIN_DIR\""
 	},
 	"keywords": [
 		"obsidian",
@@ -28,10 +28,12 @@
 	"license": "MIT",
 	"devDependencies": {
 		"@types/node": "^22.0.0",
-		"builtin-modules": "^4.0.0",
 		"esbuild": "^0.24.0",
+		"eslint": "^9.39.4",
+		"eslint-plugin-obsidianmd": "^0.4.1",
 		"obsidian": "latest",
 		"tslib": "^2.6.0",
-		"typescript": "^5.5.0"
+		"typescript": "^5.5.0",
+		"typescript-eslint": "^8.63.0"
 	}
 }

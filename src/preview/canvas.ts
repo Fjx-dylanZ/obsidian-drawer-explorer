@@ -41,15 +41,17 @@ function svg<K extends keyof SVGElementTagNameMap>(
 	tag: K,
 	attrs: Record<string, string | number>,
 ): SVGElementTagNameMap[K] {
-	const el = document.createElementNS(SVG_NS, tag);
+	const el = activeDocument.createElementNS(SVG_NS, tag);
 	for (const [key, value] of Object.entries(attrs)) {
 		el.setAttribute(key, String(value));
 	}
 	return el;
 }
 
+// "currentColor" resolves to the svg root's CSS `color` (a theme variable),
+// since presentation attributes can't reference var() directly
 function nodeColor(node: CanvasNode): string {
-	if (!node.color) return "var(--text-faint)";
+	if (!node.color) return "currentColor";
 	return CANVAS_COLORS[node.color] ?? node.color;
 }
 
@@ -104,6 +106,7 @@ export const canvasProvider: PreviewProvider = {
 			const from = byId.get(edge.fromNode);
 			const to = byId.get(edge.toNode);
 			if (!from || !to) continue;
+			// stroke color comes from the .drawer-explorer-canvas-svg line CSS rule
 			const line = svg("line", {
 				x1: from.x + from.width / 2,
 				y1: from.y + from.height / 2,
@@ -111,7 +114,6 @@ export const canvasProvider: PreviewProvider = {
 				y2: to.y + to.height / 2,
 				"stroke-width": Math.max(2, width / 300),
 			});
-			line.style.stroke = "var(--background-modifier-border)";
 			svgEl.appendChild(line);
 		}
 
@@ -128,16 +130,17 @@ export const canvasProvider: PreviewProvider = {
 				width: node.width,
 				height: node.height,
 				rx: Math.min(12, node.width / 8),
+				fill: color,
+				stroke: color,
 				"fill-opacity": node.type === "group" ? 0.06 : 0.14,
 				"stroke-width": Math.max(2, width / 400),
 			});
-			rect.style.fill = color;
-			rect.style.stroke = color;
 			svgEl.appendChild(rect);
 
 			if (!showLabels) continue;
 			const label = nodeLabel(node);
 			if (!label) continue;
+			// fill color comes from the .drawer-explorer-canvas-svg text CSS rule
 			const text = svg("text", {
 				x: node.x + node.width / 2,
 				y: node.type === "group" ? node.y + fontSize * 1.2 : node.y + node.height / 2,
@@ -145,7 +148,6 @@ export const canvasProvider: PreviewProvider = {
 				"dominant-baseline": node.type === "group" ? "auto" : "middle",
 				"font-size": fontSize,
 			});
-			text.style.fill = "var(--text-muted)";
 			text.textContent = label;
 			svgEl.appendChild(text);
 		}

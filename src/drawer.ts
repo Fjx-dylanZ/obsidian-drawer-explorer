@@ -53,6 +53,10 @@ export class Drawer {
 	// window-level capture so we run BEFORE Vim Motions' document-level
 	// global key handler, which otherwise eats h/j/k/l
 	private windowKeyHandler = (e: KeyboardEvent) => this.onKeyDown(e);
+	// the window/document hosting the drawer (activeWindow at open time,
+	// so the drawer works in popout windows too)
+	private hostWin: Window = window;
+	private hostDoc: Document = document;
 
 	isOpen = false;
 
@@ -72,14 +76,16 @@ export class Drawer {
 			return;
 		}
 		this.isOpen = true;
-		this.prevFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		this.hostWin = activeWindow;
+		this.hostDoc = activeDocument;
+		this.prevFocus = this.hostDoc.activeElement instanceof HTMLElement ? this.hostDoc.activeElement : null;
 
-		this.backdropEl = document.body.createDiv({ cls: "drawer-explorer-backdrop" });
+		this.backdropEl = this.hostDoc.body.createDiv({ cls: "drawer-explorer-backdrop" });
 		this.backdropEl.addEventListener("click", () => this.close());
 
-		this.drawerEl = document.body.createDiv({ cls: "drawer-explorer" });
+		this.drawerEl = this.hostDoc.body.createDiv({ cls: "drawer-explorer" });
 		this.drawerEl.tabIndex = -1;
-		window.addEventListener("keydown", this.windowKeyHandler, { capture: true });
+		this.hostWin.addEventListener("keydown", this.windowKeyHandler, { capture: true });
 
 		this.buildHeader();
 		this.buildBody();
@@ -94,7 +100,7 @@ export class Drawer {
 	close() {
 		if (!this.isOpen) return;
 		this.isOpen = false;
-		window.removeEventListener("keydown", this.windowKeyHandler, { capture: true });
+		this.hostWin.removeEventListener("keydown", this.windowKeyHandler, { capture: true });
 		if (this.previewTimer !== null) window.clearTimeout(this.previewTimer);
 		this.previewTimer = null;
 		if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
@@ -131,7 +137,7 @@ export class Drawer {
 		filterRow.createSpan({ cls: "drawer-explorer-prompt-char", text: "❯" });
 		this.filterInputEl = filterRow.createEl("input", {
 			cls: "drawer-explorer-input",
-			attr: { type: "text", placeholder: "filter (i)", spellcheck: "false" },
+			attr: { type: "text", placeholder: "Filter (i)", spellcheck: "false" },
 		});
 		this.filterInputEl.addEventListener("input", () => {
 			this.query = this.filterInputEl.value;
@@ -172,7 +178,8 @@ export class Drawer {
 		if (mode === "normal") {
 			this.opRowEl?.hide();
 			// Blur the inputs so keys land on the drawer again.
-			if (document.activeElement instanceof HTMLElement && this.drawerEl.contains(document.activeElement)) {
+			const active = this.hostDoc.activeElement;
+			if (active instanceof HTMLElement && this.drawerEl.contains(active)) {
 				this.drawerEl.focus();
 			}
 		}
@@ -257,7 +264,7 @@ export class Drawer {
 		} else {
 			rowEl.createSpan({ cls: "drawer-explorer-chevron is-blank" });
 			const iconEl = rowEl.createSpan({ cls: "drawer-explorer-icon" });
-			setIcon(iconEl, isFolder ? "folder-closed" : fileIcon(row.file as TFile));
+			setIcon(iconEl, row.file instanceof TFile ? fileIcon(row.file) : "folder-closed");
 		}
 
 		const label = !inTree
@@ -272,8 +279,8 @@ export class Drawer {
 			if (row.file instanceof TFolder) {
 				this.toggleFolder(row.file);
 				this.render();
-			} else {
-				void this.openFile(row.file as TFile, false);
+			} else if (row.file instanceof TFile) {
+				void this.openFile(row.file, false);
 			}
 		});
 	}
@@ -321,7 +328,8 @@ export class Drawer {
 			return;
 		}
 
-		const file = row.file as TFile;
+		if (!(row.file instanceof TFile)) return;
+		const file = row.file;
 		this.previewTitleEl.setText(file.name);
 		const provider = this.previews.resolve(file);
 		if (!provider) return;
@@ -530,8 +538,8 @@ export class Drawer {
 			if (this.query.trim()) return;
 			this.toggleFolder(row.file);
 			this.render();
-		} else {
-			void this.openFile(row.file as TFile, newTab);
+		} else if (row.file instanceof TFile) {
+			void this.openFile(row.file, newTab);
 		}
 	}
 
@@ -647,7 +655,7 @@ export class Drawer {
 		const row = this.selectedRow();
 		if (!row) return;
 		if (op === "copy" && row.file instanceof TFolder) {
-			new Notice("Drawer Explorer: copying folders is not supported");
+			new Notice("Copying folders is not supported");
 			return;
 		}
 		this.clip = { path: row.file.path, op };

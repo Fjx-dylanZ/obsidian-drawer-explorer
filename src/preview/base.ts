@@ -15,7 +15,7 @@ interface BaseFileData {
 function stringifyFilter(filter: unknown, indent = 0): string[] {
 	const pad = "  ".repeat(indent);
 	if (typeof filter === "string") return [`${pad}${filter}`];
-	if (Array.isArray(filter)) return filter.flatMap((f) => stringifyFilter(f, indent));
+	if (Array.isArray(filter)) return (filter as unknown[]).flatMap((f) => stringifyFilter(f, indent));
 	if (filter && typeof filter === "object") {
 		const lines: string[] = [];
 		for (const [op, value] of Object.entries(filter as Record<string, unknown>)) {

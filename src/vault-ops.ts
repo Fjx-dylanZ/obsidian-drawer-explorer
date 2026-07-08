@@ -55,8 +55,10 @@ export async function pasteInto(app: App, clip: Clip, dest: TFolder): Promise<st
 	if (newPath === source.path) return null;
 	if (clip.op === "cut") {
 		await app.fileManager.renameFile(source, newPath);
+	} else if (source instanceof TFile) {
+		await app.vault.copy(source, newPath);
 	} else {
-		await app.vault.copy(source as TFile, newPath);
+		throw new Error("copying folders is not supported");
 	}
 	return newPath;
 }
