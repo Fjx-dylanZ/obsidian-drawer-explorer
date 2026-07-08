@@ -47,6 +47,7 @@ Open it with the `Drawer Explorer: Open drawer` command.
 | `r` | Rename (link-aware, updates wikilinks) |
 | `d` | Delete (confirm with `y`) |
 | `x` / `y` | Cut / copy |
+| `X` / `Y` | Remove item from the cut / copy clipboard |
 | `p` | Paste into selected folder |
 | `i` / `/` | Focus the filter bar |
 | `P` | Toggle the preview pane |
@@ -56,10 +57,15 @@ Open it with the `Drawer Explorer: Open drawer` command.
 
 ### Bulk actions
 
-Mark items with `Space`, then `d`/`x`/`y` act on **all marked items** instead
-of the cursor row (`p` pastes the whole set). Marks survive filtering, so you
-can `i`-filter, mark a few results, filter again, and mark more — then cut and
-paste them into one folder. `Esc` clears the marks.
+Mark items with `Space` (highlighted rows), then `d`/`x`/`y` act on **all
+marked items** instead of the cursor row (`p` pastes the whole set). Marks
+survive filtering, so you can `i`-filter, mark a few results, filter again,
+and mark more — then cut and paste them into one folder. `Esc` clears the
+marks.
+
+Clipped items show a dot on the right edge — accent for copy, red (plus
+strikethrough) for cut — until pasted. `X`/`Y` takes items back out of the
+cut/copy clipboard.
 
 ### Filter mode
 

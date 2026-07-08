@@ -10,7 +10,7 @@ type Mode = "normal" | "filter" | "prompt" | "confirm";
 
 const HINTS: Record<Mode, string> = {
 	normal:
-		"j/k h/l move · space mark · enter/o open · a add · r rename · d delete · x/y/p move/copy · i filter · P preview · ^d/^u scroll · esc/q close",
+		"j/k h/l move · space mark · enter/o open · a add · r rename · d delete · x/y/p move/copy · X/Y unclip · i filter · P preview · ^d/^u scroll · esc/q close",
 	filter: "enter open · ↑↓/^j^k move · esc normal",
 	prompt: "enter confirm · esc cancel",
 	confirm: "y confirm · any other key cancels",
@@ -291,11 +291,12 @@ export class Drawer {
 	private renderRow(row: Row, i: number) {
 		const isFolder = row.file instanceof TFolder;
 		const isMarked = this.marked.has(row.file.path);
+		const clipOp = this.clip?.paths.includes(row.file.path) ? this.clip.op : null;
 		const rowEl = this.listEl.createDiv({ cls: "drawer-explorer-row" });
 		rowEl.toggleClass("is-selected", i === this.sel);
 		rowEl.toggleClass("is-folder", isFolder);
 		rowEl.toggleClass("is-marked", isMarked);
-		rowEl.toggleClass("is-cut", this.clip?.op === "cut" && this.clip.paths.includes(row.file.path));
+		rowEl.toggleClass("is-cut", clipOp === "cut");
 		rowEl.style.setProperty("--depth", String(row.depth));
 
 		const inTree = !this.query.trim();
@@ -319,7 +320,7 @@ export class Drawer {
 				? row.file.basename
 				: row.file.name;
 		rowEl.createSpan({ cls: "drawer-explorer-name", text: label });
-		if (isMarked) rowEl.createSpan({ cls: "drawer-explorer-mark", text: "●" });
+		if (clipOp) rowEl.createSpan({ cls: `drawer-explorer-clip is-${clipOp}`, text: "●" });
 
 		rowEl.addEventListener("click", (e) => {
 			this.sel = i;
@@ -534,6 +535,12 @@ export class Drawer {
 			case "y":
 				this.setClip("copy");
 				return true;
+			case "X":
+				this.removeFromClip("cut");
+				return true;
+			case "Y":
+				this.removeFromClip("copy");
+				return true;
 			case "p":
 				void this.paste();
 				return true;
@@ -739,6 +746,15 @@ export class Drawer {
 		// The clip carries the set now; lingering marks would double-apply on
 		// the next bulk op.
 		this.marked.clear();
+		this.render();
+	}
+
+	/** Drop the action targets from the clip: X for a cut clip, Y for a copy clip. */
+	private removeFromClip(op: Clip["op"]) {
+		if (!this.clip || this.clip.op !== op) return;
+		const drop = new Set(this.actionTargets().map((f) => f.path));
+		const paths = this.clip.paths.filter((path) => !drop.has(path));
+		this.clip = paths.length ? { paths, op } : null;
 		this.render();
 	}
 

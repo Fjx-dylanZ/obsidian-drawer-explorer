@@ -288,7 +288,7 @@
 
 /* before .is-selected so the cursor highlight wins on rows that are both */
 .drawer-explorer-row.is-marked {
-	background-color: hsla(var(--interactive-accent-hsl), 0.1);
+	background-color: hsla(var(--interactive-accent-hsl), 0.16);
 	color: var(--text-normal);
 }
 
@@ -347,13 +347,21 @@
 	text-overflow: ellipsis;
 }
 
-.drawer-explorer-mark {
+/* clipboard indicator: what a future `p` will paste */
+.drawer-explorer-clip {
 	flex-shrink: 0;
 	margin-left: auto;
 	padding-right: 2px;
 	font-size: 8px;
 	line-height: 1;
+}
+
+.drawer-explorer-clip.is-copy {
 	color: var(--text-accent);
+}
+
+.drawer-explorer-clip.is-cut {
+	color: var(--text-error);
 }
 
 .drawer-explorer-op {
