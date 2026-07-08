@@ -1,0 +1,10 @@
+{
+	"id": "drawer-explorer",
+	"name": "Drawer Explorer",
+	"version": "0.2.0",
+	"minAppVersion": "1.5.0",
+	"description": "A pop-up drawer file tree with modal vim-style navigation: hjkl to move, a/r/d file ops, i to filter, Esc back to normal mode.",
+	"author": "Dylan Zhang",
+	"authorUrl": "https://github.com/Fjx-dylanZ",
+	"isDesktopOnly": false
+}

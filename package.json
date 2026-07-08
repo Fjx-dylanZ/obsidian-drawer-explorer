@@ -1,0 +1,37 @@
+{
+	"name": "obsidian-drawer-explorer",
+	"version": "0.2.0",
+	"description": "Pop-up file tree with modal vim-style navigation and rich previews for Obsidian",
+	"main": "main.js",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Fjx-dylanZ/obsidian-drawer-explorer.git"
+	},
+	"homepage": "https://github.com/Fjx-dylanZ/obsidian-drawer-explorer",
+	"bugs": {
+		"url": "https://github.com/Fjx-dylanZ/obsidian-drawer-explorer/issues"
+	},
+	"scripts": {
+		"dev": "node esbuild.config.mjs",
+		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"install:vault": "cp manifest.json main.js styles.css \"$OBSIDIAN_PLUGIN_DIR\"",
+		"install:fluz": "sh ./install-local.sh"
+	},
+	"keywords": [
+		"obsidian",
+		"obsidian-plugin",
+		"vim",
+		"file-explorer",
+		"picker"
+	],
+	"author": "Dylan Zhang",
+	"license": "MIT",
+	"devDependencies": {
+		"@types/node": "^22.0.0",
+		"builtin-modules": "^4.0.0",
+		"esbuild": "^0.24.0",
+		"obsidian": "latest",
+		"tslib": "^2.6.0",
+		"typescript": "^5.5.0"
+	}
+}
