@@ -1,8 +1,20 @@
 import { App, TAbstractFile, TFile, TFolder, normalizePath } from "obsidian";
 
 export interface Clip {
-	path: string;
+	paths: string[];
 	op: "cut" | "copy";
+}
+
+function toError(err: unknown): Error {
+	return err instanceof Error ? err : new Error(String(err));
+}
+
+/**
+ * Drop paths that are descendants of other paths in the list — operating on
+ * the ancestor already covers them, and acting on both would double-apply.
+ */
+export function pruneNestedPaths(paths: string[]): string[] {
+	return paths.filter((path) => !paths.some((other) => other !== path && path.startsWith(`${other}/`)));
 }
 
 export function joinPath(parent: TFolder, name: string): string {
@@ -47,18 +59,50 @@ export async function renameWithin(app: App, file: TAbstractFile, newName: strin
 	return newPath;
 }
 
-/** Move (cut) or copy the clipped item into `dest`. Returns the new path, or null if a no-op. */
-export async function pasteInto(app: App, clip: Clip, dest: TFolder): Promise<string | null> {
-	const source = app.vault.getAbstractFileByPath(clip.path);
-	if (!source) return null;
-	const newPath = joinPath(dest, source.name);
-	if (newPath === source.path) return null;
-	if (clip.op === "cut") {
-		await app.fileManager.renameFile(source, newPath);
-	} else if (source instanceof TFile) {
-		await app.vault.copy(source, newPath);
-	} else {
-		throw new Error("copying folders is not supported");
+/**
+ * Move (cut) or copy the clipped items into `dest`. Vanished sources and
+ * same-place no-ops are skipped; per-item failures are collected so one bad
+ * item doesn't abort the rest.
+ */
+export async function pasteInto(
+	app: App,
+	clip: Clip,
+	dest: TFolder,
+): Promise<{ created: string[]; errors: Error[] }> {
+	const created: string[] = [];
+	const errors: Error[] = [];
+	for (const path of pruneNestedPaths(clip.paths)) {
+		const source = app.vault.getAbstractFileByPath(path);
+		if (!source) continue;
+		const newPath = joinPath(dest, source.name);
+		if (newPath === source.path) continue;
+		try {
+			if (clip.op === "cut") {
+				await app.fileManager.renameFile(source, newPath);
+			} else if (source instanceof TFile) {
+				await app.vault.copy(source, newPath);
+			} else {
+				throw new Error(`copying folders is not supported (${source.name})`);
+			}
+			created.push(newPath);
+		} catch (err) {
+			errors.push(toError(err));
+		}
 	}
-	return newPath;
+	return { created, errors };
+}
+
+/** Trash every path (children of other entries pruned first), collecting per-item failures. */
+export async function trashPaths(app: App, paths: string[]): Promise<Error[]> {
+	const errors: Error[] = [];
+	for (const path of pruneNestedPaths(paths)) {
+		const file = app.vault.getAbstractFileByPath(path);
+		if (!file) continue;
+		try {
+			await app.fileManager.trashFile(file);
+		} catch (err) {
+			errors.push(toError(err));
+		}
+	}
+	return errors;
 }

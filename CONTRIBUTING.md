@@ -25,7 +25,7 @@ OBSIDIAN_PLUGIN_DIR="<vault>/.obsidian/plugins/drawer-explorer" npm run install:
 | `src/main.ts` | Plugin entry, commands, public provider API |
 | `src/drawer.ts` | The popup: modes (normal/filter/prompt/confirm), keys, rendering |
 | `src/tree.ts` | Row building — tree walk and fuzzy filter |
-| `src/vault-ops.ts` | Create/rename/move/copy over the vault API (UI-free) |
+| `src/vault-ops.ts` | Create/rename/move/copy/trash over the vault API (UI-free, bulk-aware) |
 | `src/preview/registry.ts` | `PreviewProvider` interface and resolution |
 | `src/preview/*.ts` | One provider per file type |
 

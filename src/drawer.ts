@@ -1,7 +1,7 @@
-import { App, Component, Notice, TFile, TFolder, setIcon } from "obsidian";
+import { App, Component, Notice, TAbstractFile, TFile, TFolder, setIcon } from "obsidian";
 import type DrawerExplorerPlugin from "./main";
 import { Row, buildFilterRows, buildTreeRows, fileIcon } from "./tree";
-import { Clip, createEntry, pasteInto, renameWithin } from "./vault-ops";
+import { Clip, createEntry, pasteInto, renameWithin, trashPaths } from "./vault-ops";
 import { PreviewRegistry } from "./preview/registry";
 import { renderFolderSummary } from "./preview/builtins";
 import { PREVIEW_DEBOUNCE_MS, REFRESH_DEBOUNCE_MS } from "./utils";
@@ -10,10 +10,10 @@ type Mode = "normal" | "filter" | "prompt" | "confirm";
 
 const HINTS: Record<Mode, string> = {
 	normal:
-		"j/k h/l move · enter/o open · a add · r rename · d delete · x/y/p move/copy · i filter · P preview · ^d/^u scroll · esc/q close",
+		"j/k h/l move · space mark · enter/o open · a add · r rename · d delete · x/y/p move/copy · i filter · P preview · ^d/^u scroll · esc/q close",
 	filter: "enter open · ↑↓/^j^k move · esc normal",
 	prompt: "enter confirm · esc cancel",
-	confirm: "", // replaced by the confirm question
+	confirm: "y confirm · any other key cancels",
 };
 
 export class Drawer {
@@ -34,15 +34,18 @@ export class Drawer {
 	private opRowEl!: HTMLElement;
 	private opLabelEl!: HTMLElement;
 	private opInputEl!: HTMLInputElement;
+	private confirmRowEl!: HTMLElement;
+	private confirmTitleEl!: HTMLElement;
+	private confirmDetailEl!: HTMLElement;
 
 	private mode: Mode = "normal";
 	private expanded = new Set<string>();
+	private marked = new Set<string>();
 	private sel = 0;
 	private rows: Row[] = [];
 	private query = "";
 	private clip: Clip | null = null;
 	private pendingG = false;
-	private confirmLabel = "";
 	private onPromptSubmit: ((value: string) => void) | null = null;
 	private onConfirmYes: (() => void) | null = null;
 	private refreshTimer: number | null = null;
@@ -110,6 +113,7 @@ export class Drawer {
 		this.drawerEl.remove();
 		this.backdropEl.remove();
 		this.query = "";
+		this.marked.clear();
 		this.mode = "normal";
 		const editor = this.app.workspace.activeEditor?.editor;
 		if (editor) editor.focus();
@@ -166,6 +170,15 @@ export class Drawer {
 			attr: { type: "text", spellcheck: "false" },
 		});
 		this.opRowEl.hide();
+
+		this.confirmRowEl = this.drawerEl.createDiv({ cls: "drawer-explorer-confirm" });
+		const confirmTitleRow = this.confirmRowEl.createDiv({ cls: "drawer-explorer-confirm-title" });
+		const warnIconEl = confirmTitleRow.createSpan({ cls: "drawer-explorer-confirm-icon" });
+		setIcon(warnIconEl, "alert-triangle");
+		this.confirmTitleEl = confirmTitleRow.createSpan();
+		this.confirmDetailEl = this.confirmRowEl.createDiv({ cls: "drawer-explorer-confirm-detail" });
+		this.confirmRowEl.hide();
+
 		this.footerEl = this.drawerEl.createDiv({ cls: "drawer-explorer-footer" });
 	}
 
@@ -175,8 +188,10 @@ export class Drawer {
 		this.mode = mode;
 		this.modeChipEl?.setText(mode.toUpperCase());
 		this.drawerEl?.toggleClass("is-filter", mode === "filter");
+		this.drawerEl?.toggleClass("is-confirm", mode === "confirm");
 		if (mode === "normal") {
 			this.opRowEl?.hide();
+			this.confirmRowEl?.hide();
 			// Blur the inputs so keys land on the drawer again.
 			const active = this.hostDoc.activeElement;
 			if (active instanceof HTMLElement && this.drawerEl.contains(active)) {
@@ -195,6 +210,33 @@ export class Drawer {
 		if (!row) return this.app.vault.getRoot();
 		if (row.file instanceof TFolder) return row.file;
 		return row.file.parent ?? this.app.vault.getRoot();
+	}
+
+	/**
+	 * What a file operation should act on: the marked set when non-empty,
+	 * otherwise the cursor row. Every bulk-capable op (d/x/y) routes through
+	 * this so marks never need special-casing at the call sites.
+	 */
+	private actionTargets(): TAbstractFile[] {
+		if (this.marked.size) {
+			return [...this.marked]
+				.map((path) => this.app.vault.getAbstractFileByPath(path))
+				.filter((file): file is TAbstractFile => file !== null);
+		}
+		const row = this.selectedRow();
+		return row ? [row.file] : [];
+	}
+
+	private toggleMark(path: string) {
+		if (this.marked.has(path)) this.marked.delete(path);
+		else this.marked.add(path);
+	}
+
+	/** Drop marks whose files no longer exist (deleted or renamed elsewhere). */
+	private pruneMarks() {
+		for (const path of this.marked) {
+			if (!this.app.vault.getAbstractFileByPath(path)) this.marked.delete(path);
+		}
 	}
 
 	private revealActiveFile() {
@@ -230,9 +272,11 @@ export class Drawer {
 	private render() {
 		if (!this.isOpen) return;
 		this.buildRows();
+		this.pruneMarks();
 
 		const total = this.app.vault.getFiles().length;
-		this.countEl.setText(this.query.trim() ? `${this.rows.length}/${total}` : `${total}`);
+		const counts = this.query.trim() ? `${this.rows.length}/${total}` : `${total}`;
+		this.countEl.setText(this.marked.size ? `${this.marked.size} marked · ${counts}` : counts);
 
 		this.listEl.empty();
 		this.rows.forEach((row, i) => this.renderRow(row, i));
@@ -246,10 +290,12 @@ export class Drawer {
 
 	private renderRow(row: Row, i: number) {
 		const isFolder = row.file instanceof TFolder;
+		const isMarked = this.marked.has(row.file.path);
 		const rowEl = this.listEl.createDiv({ cls: "drawer-explorer-row" });
 		rowEl.toggleClass("is-selected", i === this.sel);
 		rowEl.toggleClass("is-folder", isFolder);
-		rowEl.toggleClass("is-cut", this.clip?.op === "cut" && this.clip.path === row.file.path);
+		rowEl.toggleClass("is-marked", isMarked);
+		rowEl.toggleClass("is-cut", this.clip?.op === "cut" && this.clip.paths.includes(row.file.path));
 		rowEl.style.setProperty("--depth", String(row.depth));
 
 		const inTree = !this.query.trim();
@@ -273,10 +319,14 @@ export class Drawer {
 				? row.file.basename
 				: row.file.name;
 		rowEl.createSpan({ cls: "drawer-explorer-name", text: label });
+		if (isMarked) rowEl.createSpan({ cls: "drawer-explorer-mark", text: "●" });
 
-		rowEl.addEventListener("click", () => {
+		rowEl.addEventListener("click", (e) => {
 			this.sel = i;
-			if (row.file instanceof TFolder) {
+			if (e.metaKey || e.ctrlKey) {
+				this.toggleMark(row.file.path);
+				this.render();
+			} else if (row.file instanceof TFolder) {
 				this.toggleFolder(row.file);
 				this.render();
 			} else if (row.file instanceof TFile) {
@@ -287,7 +337,7 @@ export class Drawer {
 
 	private renderFooter() {
 		if (!this.footerEl) return;
-		this.footerEl.setText(this.mode === "confirm" ? `${this.confirmLabel} (y/N)` : HINTS[this.mode]);
+		this.footerEl.setText(HINTS[this.mode]);
 	}
 
 	// ------------------------------------------------------------- preview
@@ -430,6 +480,14 @@ export class Drawer {
 		}
 
 		switch (key) {
+			case " ": {
+				const row = this.selectedRow();
+				if (row) {
+					this.toggleMark(row.file.path);
+					this.render();
+				}
+				return true;
+			}
 			case "j":
 			case "ArrowDown":
 				this.moveSel(1);
@@ -489,7 +547,10 @@ export class Drawer {
 				return true;
 			case "q":
 			case "Escape":
-				if (this.query.trim()) {
+				if (this.marked.size) {
+					this.marked.clear();
+					this.render();
+				} else if (this.query.trim()) {
 					this.query = "";
 					this.filterInputEl.value = "";
 					this.sel = 0;
@@ -582,9 +643,15 @@ export class Drawer {
 		this.setMode("normal");
 	}
 
-	private confirm(label: string, onYes: () => void) {
-		this.confirmLabel = label;
+	/** Ask a destructive yes/no question in a warning panel; `details` lists the affected items. */
+	private confirm(label: string, onYes: () => void, details: string[] = []) {
 		this.onConfirmYes = onYes;
+		this.confirmTitleEl.setText(label);
+		const cap = 6;
+		const shown = details.slice(0, cap).join(" · ");
+		this.confirmDetailEl.setText(details.length > cap ? `${shown} (+${details.length - cap} more)` : shown);
+		this.confirmDetailEl.toggle(details.length > 0);
+		this.confirmRowEl.show();
 		this.setMode("confirm");
 	}
 
@@ -597,6 +664,12 @@ export class Drawer {
 
 	private reportError(err: unknown) {
 		new Notice(`Drawer Explorer: ${(err as Error).message}`);
+	}
+
+	private reportErrors(errors: Error[]) {
+		if (!errors.length) return;
+		const extra = errors.length > 1 ? ` (+${errors.length - 1} more)` : "";
+		new Notice(`Drawer Explorer: ${errors[0].message}${extra}`);
 	}
 
 	private promptNew() {
@@ -636,44 +709,50 @@ export class Drawer {
 	}
 
 	private confirmDelete() {
-		const row = this.selectedRow();
-		if (!row) return;
-		const file = row.file;
-		this.confirm(`Delete ${file.name}?`, () => {
-			void (async () => {
-				try {
-					await this.app.fileManager.trashFile(file);
+		const targets = this.actionTargets();
+		if (!targets.length) return;
+		const label = targets.length === 1 ? `Delete ${targets[0].name}?` : `Delete ${targets.length} items?`;
+		const names = targets.map((f) => (f instanceof TFolder ? `${f.name}/` : f.name));
+		this.confirm(
+			label,
+			() => {
+				void (async () => {
+					this.reportErrors(await trashPaths(this.app, targets.map((f) => f.path)));
+					this.marked.clear();
 					this.render();
-				} catch (err) {
-					this.reportError(err);
-				}
-			})();
-		});
+				})();
+			},
+			targets.length > 1 ? names : [],
+		);
 	}
 
 	private setClip(op: Clip["op"]) {
-		const row = this.selectedRow();
-		if (!row) return;
-		if (op === "copy" && row.file instanceof TFolder) {
-			new Notice("Copying folders is not supported");
-			return;
+		const targets = this.actionTargets();
+		if (!targets.length) return;
+		let files = targets;
+		if (op === "copy") {
+			files = targets.filter((f) => f instanceof TFile);
+			if (files.length < targets.length) new Notice("Copying folders is not supported");
+			if (!files.length) return;
 		}
-		this.clip = { path: row.file.path, op };
+		this.clip = { paths: files.map((f) => f.path), op };
+		// The clip carries the set now; lingering marks would double-apply on
+		// the next bulk op.
+		this.marked.clear();
 		this.render();
 	}
 
 	private async paste() {
 		if (!this.clip) return;
 		const dest = this.targetFolder();
-		try {
-			const newPath = await pasteInto(this.app, this.clip, dest);
-			this.clip = null;
-			if (newPath) {
-				this.expanded.add(dest.path);
-				this.focusPath(newPath);
-			}
-		} catch (err) {
-			this.reportError(err);
+		const { created, errors } = await pasteInto(this.app, this.clip, dest);
+		this.clip = null;
+		this.reportErrors(errors);
+		if (created.length) {
+			this.expanded.add(dest.path);
+			this.focusPath(created[created.length - 1]);
+		} else {
+			this.render();
 		}
 	}
 }

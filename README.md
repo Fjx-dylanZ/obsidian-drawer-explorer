@@ -5,7 +5,8 @@ navigation and a live preview pane — inspired by the snacks.nvim / neo-tree
 explorer experience. Focus defaults to the tree, not a search bar.
 
 - **Modal navigation**: `hjkl` through the tree, `a`/`r`/`d` file operations,
-  `x`/`y`/`p` move & copy — no mouse required.
+  `x`/`y`/`p` move & copy, `Space` to mark files for bulk operations — no
+  mouse required.
 - **Filter like a picker**: `i` focuses the fuzzy filter, `Esc` pops back to
   normal mode *keeping the results* so you can `j`/`k` through them.
 - **Preview pane**: rendered markdown, images, `.canvas` minimaps, `.base`
@@ -41,16 +42,24 @@ Open it with the `Drawer Explorer: Open drawer` command.
 | `l` / `Enter` | Toggle folder / open file |
 | `o` | Open file in new tab |
 | `gg` / `G` | First / last row |
+| `Space` | Mark/unmark item (bulk select; `Ctrl`/`Cmd`-click too) |
 | `a` | New file (`name`), folder (`name/`), or nested path (`a/b/c.md`) |
 | `r` | Rename (link-aware, updates wikilinks) |
 | `d` | Delete (confirm with `y`) |
-| `x` / `y` | Cut / copy selected item |
+| `x` / `y` | Cut / copy |
 | `p` | Paste into selected folder |
 | `i` / `/` | Focus the filter bar |
 | `P` | Toggle the preview pane |
 | `Ctrl+d` / `Ctrl+u` | Scroll the preview half a page |
 | `R` | Refresh |
-| `Esc` / `q` | Clear filter → close |
+| `Esc` / `q` | Clear marks → clear filter → close |
+
+### Bulk actions
+
+Mark items with `Space`, then `d`/`x`/`y` act on **all marked items** instead
+of the cursor row (`p` pastes the whole set). Marks survive filtering, so you
+can `i`-filter, mark a few results, filter again, and mark more — then cut and
+paste them into one folder. `Esc` clears the marks.
 
 ### Filter mode
 
