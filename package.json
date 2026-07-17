@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-drawer-explorer",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"description": "Pop-up file and tag explorer with modal vim-style navigation and rich previews for Obsidian",
 	"main": "main.js",
 	"repository": {

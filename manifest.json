@@ -1,7 +1,7 @@
 {
 	"id": "drawer-explorer",
 	"name": "Drawer Explorer",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"minAppVersion": "1.8.7",
 	"description": "A modal, vim-style file and tag explorer with progressive tag refinement, file operations, filtering, and rich previews.",
 	"author": "Dylan Zhang",
