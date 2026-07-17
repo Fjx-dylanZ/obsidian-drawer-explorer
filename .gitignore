@@ -3,3 +3,4 @@ main.js
 .test-dist/
 install-local.sh
 .DS_Store
+/showcase-vault/

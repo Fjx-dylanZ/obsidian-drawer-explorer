@@ -18,11 +18,31 @@ neo-tree explorer experience. Focus defaults to the tree, not a search bar.
 
 > Status: young but daily-driven. Expect sharp edges; issues and PRs welcome.
 
+## Showcase
+
+### File lens
+
+Browse the physical folder tree with modal navigation, file operations, fuzzy
+filtering, and rich previews for Markdown, images, Canvas, Bases, and text.
+
+![Drawer Explorer file lens with an expanded vault tree and rendered Markdown preview](docs/screenshots/file-lens.png)
+
+### Tag lens
+
+Focus a hierarchical tag, combine co-occurring refinements with AND, navigate
+the deduplicated notes, and inspect rendered previews without leaving the
+drawer.
+
+![Drawer Explorer tag lens with hierarchical refinements, matching notes, and a rendered Mermaid preview](docs/screenshots/tag-lens.png)
+
 ## Installation
 
-Not yet in the community plugin store. Until then:
+[Install Drawer Explorer from the Obsidian Community Plugin directory](https://community.obsidian.md/plugins/drawer-explorer),
+or open Settings → Community plugins → Browse and search for **Drawer Explorer**.
 
-- **[BRAT](https://github.com/TfTHacker/obsidian42-brat)**: add
+Other installation options:
+
+- **[BRAT](https://github.com/TfTHacker/obsidian42-brat)** for pre-release builds: add
   `Fjx-dylanZ/obsidian-drawer-explorer` as a beta plugin.
 - **Manual**: grab `manifest.json`, `main.js`, and `styles.css` from the
   [latest release](https://github.com/Fjx-dylanZ/obsidian-drawer-explorer/releases)
