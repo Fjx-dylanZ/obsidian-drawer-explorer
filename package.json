@@ -1,7 +1,7 @@
 {
 	"name": "obsidian-drawer-explorer",
 	"version": "0.3.0",
-	"description": "Pop-up file tree with modal vim-style navigation and rich previews for Obsidian",
+	"description": "Pop-up file and tag explorer with modal vim-style navigation and rich previews for Obsidian",
 	"main": "main.js",
 	"repository": {
 		"type": "git",
@@ -14,6 +14,7 @@
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"test": "tsc -p tsconfig.test.json && node --test .test-dist/tests/tag-model.test.js",
 		"lint": "eslint src/",
 		"install:vault": "cp manifest.json main.js styles.css \"$OBSIDIAN_PLUGIN_DIR\""
 	},

@@ -8,6 +8,8 @@ extend it is usually a **preview provider** (see below) rather than new UI.
 ```sh
 npm install
 npm run build     # type-check + bundle to main.js
+npm test          # pure tag-model tests
+npm run lint
 npm run dev       # watch mode
 ```
 
@@ -25,6 +27,8 @@ OBSIDIAN_PLUGIN_DIR="<vault>/.obsidian/plugins/drawer-explorer" npm run install:
 | `src/main.ts` | Plugin entry, commands, public provider API |
 | `src/drawer.ts` | The popup: modes (normal/filter/prompt/confirm), keys, rendering |
 | `src/tree.ts` | Row building — tree walk and fuzzy filter |
+| `src/tag-model.ts` | Obsidian-free nested-tag index, counts, intersections, and tree flattening |
+| `src/tag-index.ts` | Adapter from Obsidian's metadata cache into the pure tag model |
 | `src/vault-ops.ts` | Create/rename/move/copy/trash over the vault API (UI-free, bulk-aware) |
 | `src/preview/registry.ts` | `PreviewProvider` interface and resolution |
 | `src/preview/*.ts` | One provider per file type |

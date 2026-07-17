@@ -1,17 +1,52 @@
-import { App, Component, Notice, TAbstractFile, TFile, TFolder, setIcon } from "obsidian";
+import { App, Component, Notice, TAbstractFile, TFile, TFolder, prepareFuzzySearch, setIcon } from "obsidian";
 import type DrawerExplorerPlugin from "./main";
 import { Row, buildFilterRows, buildTreeRows, fileIcon } from "./tree";
 import { Clip, createEntry, pasteInto, renameWithin, trashPaths } from "./vault-ops";
 import { PreviewRegistry } from "./preview/registry";
 import { renderFolderSummary } from "./preview/builtins";
-import { PREVIEW_DEBOUNCE_MS, REFRESH_DEBOUNCE_MS } from "./utils";
+import {
+	FILTER_RESULT_CAP,
+	PREVIEW_DEBOUNCE_MS,
+	REFRESH_DEBOUNCE_MS,
+	TAG_REFRESH_DEBOUNCE_MS,
+} from "./utils";
+import { VaultTagSnapshot, buildVaultTagSnapshot } from "./tag-index";
+import {
+	contextualTagCounts,
+	flattenTagNodes,
+	matchingDocumentPaths,
+	rootTagId,
+} from "./tag-model";
 
 type Mode = "normal" | "filter" | "prompt" | "confirm";
+type Lens = "files" | "tags";
+type TagSection = "tags" | "refine" | "notes";
+type TagFocus = { kind: "tag"; id: string } | { kind: "untagged" } | null;
 
-const HINTS: Record<Mode, string> = {
+type TagLensRow =
+	| {
+			kind: "tag";
+			section: Exclude<TagSection, "notes">;
+			id: string;
+			depth: number;
+			count: number;
+			hasChildren: boolean;
+	  }
+	| { kind: "untagged"; section: "tags"; count: number }
+	| { kind: "file"; section: "notes"; file: TFile };
+
+const FILE_HINTS: Record<Mode, string> = {
 	normal:
-		"j/k h/l move · space mark · enter/o open · a add · r rename · d delete · x/y/p move/copy · X/Y unclip · i filter · P preview · ^d/^u scroll · esc/q close",
-	filter: "enter open · ↑↓/^j^k move · esc normal",
+		"j/k h/l move · space mark · enter/l current tab · o new tab · t tags · a add · r rename · d delete · x/y/p move/copy · i filter · P preview · esc/q close",
+	filter: "enter current tab · ↑↓/^j^k move · esc normal",
+	prompt: "enter confirm · esc cancel",
+	confirm: "y confirm · any other key cancels",
+};
+
+const TAG_HINTS: Record<Mode, string> = {
+	normal:
+		"j/k move · h/l collapse/expand · enter follow/open · space toggle/stay · o new tab · t files · i filter · P preview · esc back · q close",
+	filter: "enter follow/open · ↑↓/^j^k move · esc clear search",
 	prompt: "enter confirm · esc cancel",
 	confirm: "y confirm · any other key cancels",
 };
@@ -24,7 +59,10 @@ export class Drawer {
 	private backdropEl!: HTMLElement;
 	private drawerEl!: HTMLElement;
 	private modeChipEl!: HTMLElement;
+	private filesLensEl!: HTMLButtonElement;
+	private tagsLensEl!: HTMLButtonElement;
 	private countEl!: HTMLElement;
+	private tagContextEl!: HTMLElement;
 	private filterInputEl!: HTMLInputElement;
 	private listEl!: HTMLElement;
 	private previewEl!: HTMLElement;
@@ -39,10 +77,27 @@ export class Drawer {
 	private confirmDetailEl!: HTMLElement;
 
 	private mode: Mode = "normal";
+	private lens: Lens = "files";
 	private expanded = new Set<string>();
 	private marked = new Set<string>();
 	private sel = 0;
 	private rows: Row[] = [];
+	private tagRows: TagLensRow[] = [];
+	private tagSel = 0;
+	private tagExpanded = new Set<string>();
+	private tagRefineExpanded = new Set<string>();
+	private tagFocus: TagFocus = null;
+	private tagFilters: string[] = [];
+	private tagSnapshot: VaultTagSnapshot | null = null;
+	private tagIndexDirty = true;
+	private currentTagResultPaths: Set<string> | null = null;
+	private currentTagCounts: Map<string, number> | null = null;
+	private visibleTagNoteCount = 0;
+	private tagTreeTruncated = false;
+	private tagNotesTruncated = false;
+	private preferFirstTagResult = false;
+	private preferActiveTagResult = false;
+	private tagRestoreCursorKey: string | null = null;
 	private query = "";
 	private clip: Clip | null = null;
 	private pendingG = false;
@@ -73,12 +128,14 @@ export class Drawer {
 
 	open() {
 		if (this.isOpen) {
-			this.revealActiveFile();
+			this.setMode("normal");
+			if (this.lens === "files") this.revealActiveFile();
 			this.render();
 			this.drawerEl.focus();
 			return;
 		}
 		this.isOpen = true;
+		this.preferActiveTagResult = this.lens === "tags";
 		this.hostWin = activeWindow;
 		this.hostDoc = activeDocument;
 		this.prevFocus = this.hostDoc.activeElement instanceof HTMLElement ? this.hostDoc.activeElement : null;
@@ -88,20 +145,35 @@ export class Drawer {
 
 		this.drawerEl = this.hostDoc.body.createDiv({ cls: "drawer-explorer" });
 		this.drawerEl.tabIndex = -1;
+		this.drawerEl.addEventListener("pointerdown", () => {
+			this.pendingG = false;
+		}, { capture: true });
 		this.hostWin.addEventListener("keydown", this.windowKeyHandler, { capture: true });
 
 		this.buildHeader();
 		this.buildBody();
 		this.buildFooter();
 
-		this.revealActiveFile();
+		if (this.lens === "files") this.revealActiveFile();
 		this.setMode("normal");
 		this.render();
 		this.drawerEl.focus();
 	}
 
+	openTagLens() {
+		if (this.isOpen) this.setLens("tags");
+		else {
+			this.lens = "tags";
+			this.open();
+		}
+	}
+
 	close() {
 		if (!this.isOpen) return;
+		if (!this.tagRestoreCursorKey) {
+			const selectedTagRow = this.selectedTagRow();
+			if (selectedTagRow) this.tagRestoreCursorKey = this.tagRowKey(selectedTagRow);
+		}
 		this.isOpen = false;
 		this.hostWin.removeEventListener("keydown", this.windowKeyHandler, { capture: true });
 		if (this.previewTimer !== null) window.clearTimeout(this.previewTimer);
@@ -113,20 +185,30 @@ export class Drawer {
 		this.drawerEl.remove();
 		this.backdropEl.remove();
 		this.query = "";
+		this.filterInputEl.value = "";
 		this.marked.clear();
+		this.preferFirstTagResult = false;
+		this.preferActiveTagResult = false;
 		this.mode = "normal";
+		this.pendingG = false;
 		const editor = this.app.workspace.activeEditor?.editor;
 		if (editor) editor.focus();
 		else this.prevFocus?.focus();
 	}
 
-	scheduleRefresh() {
+	/** Mark the cached tag projection stale even when the drawer is closed. */
+	invalidateTags() {
+		this.tagIndexDirty = true;
+		this.scheduleRefresh(TAG_REFRESH_DEBOUNCE_MS);
+	}
+
+	scheduleRefresh(delay = REFRESH_DEBOUNCE_MS) {
 		if (!this.isOpen) return;
 		if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
 		this.refreshTimer = window.setTimeout(() => {
 			this.refreshTimer = null;
 			if (this.isOpen) this.render();
-		}, REFRESH_DEBOUNCE_MS);
+		}, delay);
 	}
 
 	// ------------------------------------------------------------- dom setup
@@ -134,21 +216,47 @@ export class Drawer {
 	private buildHeader() {
 		const header = this.drawerEl.createDiv({ cls: "drawer-explorer-header" });
 		header.createSpan({ cls: "drawer-explorer-title", text: this.app.vault.getName() });
+		const lensesEl = header.createDiv({ cls: "drawer-explorer-lenses", attr: { role: "tablist" } });
+		this.filesLensEl = lensesEl.createEl("button", {
+			cls: "drawer-explorer-lens",
+			text: "Files",
+			attr: { type: "button", role: "tab" },
+		});
+		this.tagsLensEl = lensesEl.createEl("button", {
+			cls: "drawer-explorer-lens",
+			text: "Tags",
+			attr: { type: "button", role: "tab" },
+		});
+		this.filesLensEl.addEventListener("click", () => this.setLens("files"));
+		this.tagsLensEl.addEventListener("click", () => this.setLens("tags"));
 		this.modeChipEl = header.createSpan({ cls: "drawer-explorer-mode", text: "NORMAL" });
 		this.countEl = header.createSpan({ cls: "drawer-explorer-count" });
+		this.updateLensControls();
+
+		this.tagContextEl = this.drawerEl.createDiv({ cls: "drawer-explorer-tag-context" });
+		this.tagContextEl.hide();
 
 		const filterRow = this.drawerEl.createDiv({ cls: "drawer-explorer-filter" });
 		filterRow.createSpan({ cls: "drawer-explorer-prompt-char", text: "❯" });
 		this.filterInputEl = filterRow.createEl("input", {
 			cls: "drawer-explorer-input",
-			attr: { type: "text", placeholder: "Filter (i)", spellcheck: "false" },
+			attr: {
+				type: "text",
+				placeholder: this.lens === "tags" ? "Filter tags and notes…" : "Filter (i)",
+				spellcheck: "false",
+			},
 		});
 		this.filterInputEl.addEventListener("input", () => {
 			this.query = this.filterInputEl.value;
-			this.sel = 0;
+			if (this.lens === "tags") {
+				this.cancelTagRestorePreference();
+				this.tagSel = 0;
+			}
+			else this.sel = 0;
 			this.render();
 		});
 		this.filterInputEl.addEventListener("focus", () => {
+			if (this.lens === "tags") this.cancelTagRestorePreference();
 			if (this.mode === "normal") this.setMode("filter");
 		});
 	}
@@ -201,8 +309,72 @@ export class Drawer {
 		this.renderFooter();
 	}
 
+	private setLens(lens: Lens) {
+		this.pendingG = false;
+		if (this.lens === lens) {
+			this.setMode("normal");
+			this.drawerEl.focus();
+			return;
+		}
+		this.lens = lens;
+		this.query = "";
+		this.filterInputEl.value = "";
+		this.filterInputEl.placeholder = lens === "tags" ? "Filter tags and notes…" : "Filter (i)";
+		this.setMode("normal");
+		this.updateLensControls();
+		if (lens === "files") this.revealActiveFile();
+		else this.ensureTagSnapshot();
+		this.render();
+		this.drawerEl.focus();
+	}
+
+	private preparePointerAction() {
+		this.pendingG = false;
+		if (this.lens === "tags") this.cancelTagRestorePreference();
+		if (this.mode === "filter") this.setMode("normal");
+	}
+
+	private cancelTagRestorePreference() {
+		this.preferActiveTagResult = false;
+		this.tagRestoreCursorKey = null;
+	}
+
+	private updateLensControls() {
+		this.drawerEl?.toggleClass("is-tags", this.lens === "tags");
+		for (const [lens, el] of [
+			["files", this.filesLensEl],
+			["tags", this.tagsLensEl],
+		] as const) {
+			const active = this.lens === lens;
+			el?.toggleClass("is-active", active);
+			el?.setAttribute("aria-selected", String(active));
+			if (el) el.tabIndex = active ? 0 : -1;
+		}
+	}
+
 	private selectedRow(): Row | null {
 		return this.rows[this.sel] ?? null;
+	}
+
+	private selectedTagRow(): TagLensRow | null {
+		return this.tagRows[this.tagSel] ?? null;
+	}
+
+	private ensureTagSnapshot(): VaultTagSnapshot {
+		if (!this.tagSnapshot || this.tagIndexDirty) {
+			this.tagSnapshot = buildVaultTagSnapshot(this.app);
+			this.tagIndexDirty = false;
+			if (!this.tagSnapshot.pendingFiles) {
+				const nodes = this.tagSnapshot.index.nodes;
+				if (this.tagFocus?.kind === "tag" && !nodes.has(this.tagFocus.id)) {
+					this.tagFocus = null;
+					this.tagFilters = [];
+				} else {
+					this.tagFilters = this.tagFilters.filter((id) => nodes.has(id));
+				}
+			}
+		}
+		return this.tagSnapshot;
 	}
 
 	private targetFolder(): TFolder {
@@ -267,10 +439,209 @@ export class Drawer {
 		this.sel = Math.max(0, Math.min(this.sel, this.rows.length - 1));
 	}
 
+	private tagRowKey(row: TagLensRow): string {
+		if (row.kind === "tag") return `tag:${row.id}`;
+		if (row.kind === "file") return `file:${row.file.path}`;
+		return "untagged";
+	}
+
+	private activeTagIds(): string[] {
+		return this.tagFocus?.kind === "tag" ? [this.tagFocus.id, ...this.tagFilters] : [];
+	}
+
+	private activeTagExpansion(): Set<string> {
+		return this.tagFocus ? this.tagRefineExpanded : this.tagExpanded;
+	}
+
+	private tagResultPaths(snapshot: VaultTagSnapshot): Set<string> | null {
+		if (!this.tagFocus) return null;
+		if (this.tagFocus.kind === "untagged") return new Set(snapshot.index.untaggedPaths);
+		return matchingDocumentPaths(snapshot.index, this.activeTagIds());
+	}
+
+	private buildTagRows() {
+		const renderedCursorKey = this.tagRows[this.tagSel] ? this.tagRowKey(this.tagRows[this.tagSel]) : null;
+		const previousKey = this.tagRestoreCursorKey ?? renderedCursorKey;
+		const snapshot = this.ensureTagSnapshot();
+		const { index } = snapshot;
+		const resultPaths = this.tagResultPaths(snapshot);
+		this.currentTagResultPaths = resultPaths;
+		const query = this.query.trim();
+		const rows: TagLensRow[] = [];
+		const section: Exclude<TagSection, "notes"> = this.tagFocus ? "refine" : "tags";
+		const counts = resultPaths ? contextualTagCounts(index, resultPaths) : undefined;
+		this.currentTagCounts = counts ?? null;
+		this.visibleTagNoteCount = 0;
+		this.tagTreeTruncated = false;
+		this.tagNotesTruncated = false;
+		const excludedRoot = this.tagFocus?.kind === "tag" ? rootTagId(this.tagFocus.id) : undefined;
+		if (!query && previousKey?.startsWith("tag:")) {
+			let parentId = index.nodes.get(previousKey.slice("tag:".length))?.parentId;
+			const expanded = this.activeTagExpansion();
+			while (parentId) {
+				expanded.add(parentId);
+				parentId = index.nodes.get(parentId)?.parentId;
+			}
+		}
+
+		if (query) {
+			const search = prepareFuzzySearch(query);
+			const tagMatches: { id: string; score: number; count: number }[] = [];
+			if (this.tagFocus?.kind !== "untagged") {
+				for (const node of index.nodes.values()) {
+					if (excludedRoot && rootTagId(node.id) === excludedRoot) continue;
+					const count = counts ? (counts.get(node.id) ?? 0) : node.matchingFilePaths.size;
+					if (counts && count === 0) continue;
+					const match = search(`#${node.displayPath}`);
+					if (match) tagMatches.push({ id: node.id, score: match.score, count });
+				}
+			}
+			tagMatches.sort((a, b) => b.score - a.score);
+			this.tagTreeTruncated = tagMatches.length > FILTER_RESULT_CAP;
+			for (const match of tagMatches.slice(0, FILTER_RESULT_CAP)) {
+				rows.push({
+					kind: "tag",
+					section,
+					id: match.id,
+					depth: 0,
+					count: match.count,
+					hasChildren: false,
+				});
+			}
+			if (!this.tagFocus && index.untaggedPaths.size && search("Untagged")) {
+				rows.push({ kind: "untagged", section: "tags", count: index.untaggedPaths.size });
+			}
+		} else if (this.tagFocus?.kind !== "untagged") {
+			const visibleTags = flattenTagNodes(index, this.activeTagExpansion(), counts, excludedRoot);
+			this.tagTreeTruncated = visibleTags.length > FILTER_RESULT_CAP;
+			const visibleTagRows = visibleTags.slice(0, FILTER_RESULT_CAP);
+			const preferredTagId = previousKey?.startsWith("tag:") ? previousKey.slice("tag:".length) : undefined;
+			if (preferredTagId && !visibleTagRows.some((tag) => tag.id === preferredTagId)) {
+				const preferredChain: (typeof visibleTags)[number][] = [];
+				let id: string | null | undefined = preferredTagId;
+				while (id) {
+					const tag = visibleTags.find((candidate) => candidate.id === id);
+					if (tag) preferredChain.unshift(tag);
+					id = index.nodes.get(id)?.parentId;
+				}
+				const preferredIndex = visibleTags.findIndex((tag) => tag.id === preferredTagId);
+				const preferredTag = visibleTags[preferredIndex];
+				const firstChild = visibleTags[preferredIndex + 1];
+				if (
+					preferredTag &&
+					firstChild?.depth === preferredTag.depth + 1 &&
+					this.activeTagExpansion().has(preferredTag.id)
+				) {
+					preferredChain.push(firstChild);
+				}
+				const requiredRows = preferredChain.slice(-FILTER_RESULT_CAP);
+				const requiredIds = new Set(requiredRows.map((tag) => tag.id));
+				for (const tag of requiredRows) {
+					if (visibleTagRows.some((candidate) => candidate.id === tag.id)) continue;
+					let removeIndex = visibleTagRows.length - 1;
+					while (removeIndex >= 0 && requiredIds.has(visibleTagRows[removeIndex].id)) {
+						removeIndex -= 1;
+					}
+					if (removeIndex >= 0 && visibleTagRows.length >= FILTER_RESULT_CAP) {
+						visibleTagRows.splice(removeIndex, 1);
+					}
+					visibleTagRows.push(tag);
+				}
+			}
+			for (const tag of visibleTagRows) {
+				rows.push({ kind: "tag", section, ...tag });
+			}
+			if (!this.tagFocus && index.untaggedPaths.size) {
+				rows.push({ kind: "untagged", section: "tags", count: index.untaggedPaths.size });
+			}
+		}
+
+		const fileScope = resultPaths ?? (query ? new Set(index.documents.keys()) : null);
+		if (fileScope) {
+			const search = query ? prepareFuzzySearch(query) : null;
+			const matches: { file: TFile; score: number }[] = [];
+			for (const path of fileScope) {
+				const file = this.app.vault.getAbstractFileByPath(path);
+				if (!(file instanceof TFile)) continue;
+				const match = search?.(file.path);
+				if (search && !match) continue;
+				matches.push({ file, score: match?.score ?? 0 });
+			}
+			matches.sort((a, b) => {
+				if (search && a.score !== b.score) return b.score - a.score;
+				return a.file.basename.localeCompare(b.file.basename, undefined, {
+					sensitivity: "base",
+					numeric: true,
+				});
+			});
+			this.visibleTagNoteCount = matches.length;
+			this.tagNotesTruncated = matches.length > FILTER_RESULT_CAP;
+			const visibleMatches = matches.slice(0, FILTER_RESULT_CAP);
+			const activePath = this.preferActiveTagResult ? this.app.workspace.getActiveFile()?.path : undefined;
+			const previousPath = previousKey?.startsWith("file:") ? previousKey.slice("file:".length) : undefined;
+			const preferredMatch = [activePath, previousPath]
+				.filter((path): path is string => Boolean(path))
+				.map((path) => matches.find((match) => match.file.path === path))
+				.find((match) => match !== undefined);
+			if (
+				preferredMatch &&
+				!visibleMatches.some((match) => match.file.path === preferredMatch.file.path)
+			) {
+				visibleMatches[visibleMatches.length - 1] = preferredMatch;
+			}
+			for (const { file } of visibleMatches) {
+				rows.push({ kind: "file", section: "notes", file });
+			}
+		}
+
+		this.tagRows = rows;
+		if (this.preferActiveTagResult) {
+			const activeFile = this.app.workspace.getActiveFile();
+			const activePath = activeFile?.path;
+			const activeIndex = activePath
+				? rows.findIndex((row) => row.kind === "file" && row.file.path === activePath)
+				: -1;
+			if (activeIndex >= 0) {
+				this.preferActiveTagResult = false;
+				this.tagRestoreCursorKey = null;
+				this.tagSel = activeIndex;
+				return;
+			}
+			const activeMetadataPending = Boolean(
+				resultPaths &&
+				activeFile?.extension.toLowerCase() === "md" &&
+				snapshot.pendingFiles &&
+				!index.documents.has(activeFile.path),
+			);
+			if (!activeMetadataPending) this.preferActiveTagResult = false;
+		}
+		if (this.preferFirstTagResult) {
+			const firstResult = rows.findIndex((row) => row.kind === "file");
+			this.tagSel = firstResult >= 0 ? firstResult : 0;
+			this.preferFirstTagResult = false;
+			this.tagRestoreCursorKey = null;
+			return;
+		}
+		const previousIndex = previousKey ? rows.findIndex((row) => this.tagRowKey(row) === previousKey) : -1;
+		if (previousIndex >= 0) {
+			this.tagSel = previousIndex;
+			this.tagRestoreCursorKey = null;
+		} else {
+			this.tagSel = 0;
+			if (!snapshot.pendingFiles) this.tagRestoreCursorKey = null;
+		}
+	}
+
 	// ------------------------------------------------------------- render
 
 	private render() {
 		if (!this.isOpen) return;
+		this.updateLensControls();
+		if (this.lens === "tags") {
+			this.renderTagLens();
+			return;
+		}
+		this.tagContextEl.hide();
 		this.buildRows();
 		this.pruneMarks();
 
@@ -281,11 +652,189 @@ export class Drawer {
 		this.listEl.empty();
 		this.rows.forEach((row, i) => this.renderRow(row, i));
 
-		const selEl = this.listEl.children[this.sel];
+		const selEl = this.listEl.querySelector<HTMLElement>(".drawer-explorer-row.is-selected");
 		if (selEl) selEl.scrollIntoView({ block: "nearest" });
 
 		this.renderFooter();
 		this.schedulePreview();
+	}
+
+	private renderTagLens() {
+		this.buildTagRows();
+		this.renderTagContext();
+		const snapshot = this.ensureTagSnapshot();
+		const resultPaths = this.currentTagResultPaths;
+		const indexing = snapshot.pendingFiles ? ` · ${snapshot.pendingFiles} indexing` : "";
+		if (resultPaths) this.countEl.setText(`${resultPaths.size} notes${indexing}`);
+		else this.countEl.setText(`${snapshot.index.nodes.size} tags · ${snapshot.index.documents.size} notes${indexing}`);
+
+		this.listEl.empty();
+		let previousSection: TagSection | null = null;
+		let renderedTruncation = false;
+		this.tagRows.forEach((row, i) => {
+			if (row.section === "notes" && this.tagTreeTruncated && !renderedTruncation) {
+				this.renderTagTruncation();
+				renderedTruncation = true;
+			}
+			if (row.section !== previousSection) {
+				this.renderTagSection(row.section, this.visibleTagNoteCount, resultPaths?.size);
+				previousSection = row.section;
+			}
+			this.renderTagRow(row, i);
+		});
+		if (this.tagTreeTruncated && !renderedTruncation) this.renderTagTruncation();
+		if (this.tagNotesTruncated) this.renderTagNoteTruncation();
+
+		if (!this.tagRows.length) {
+			let message = "No indexed tags";
+			if (snapshot.pendingFiles) message = `Indexing ${snapshot.pendingFiles} notes…`;
+			else if (this.query.trim()) message = "No matching tags or notes";
+			else if (this.tagFocus) message = "No notes match these tags";
+			this.listEl.createDiv({ cls: "drawer-explorer-tag-empty", text: message });
+		}
+
+		const selEl = this.listEl.querySelector<HTMLElement>(".drawer-explorer-row.is-selected");
+		if (selEl) selEl.scrollIntoView({ block: "nearest" });
+		this.renderFooter();
+		this.schedulePreview();
+	}
+
+	private renderTagTruncation() {
+		this.listEl.createDiv({
+			cls: "drawer-explorer-tag-limit",
+			text: `Showing the first ${FILTER_RESULT_CAP} tags · filter to narrow`,
+		});
+	}
+
+	private renderTagNoteTruncation() {
+		this.listEl.createDiv({
+			cls: "drawer-explorer-tag-limit",
+			text: `Showing ${FILTER_RESULT_CAP} of ${this.visibleTagNoteCount} matching notes · filter to narrow`,
+		});
+	}
+
+	private renderTagSection(section: TagSection, visibleNoteCount: number, resultCount?: number) {
+		const headerEl = this.listEl.createDiv({ cls: "drawer-explorer-section-header" });
+		headerEl.createSpan({ cls: "drawer-explorer-section-title", text: section.toUpperCase() });
+		if (section === "notes") {
+			const count = this.tagNotesTruncated
+				? `${FILTER_RESULT_CAP}/${visibleNoteCount}`
+				: this.query.trim() && resultCount !== undefined
+				? `${visibleNoteCount}/${resultCount}`
+				: String(visibleNoteCount);
+			headerEl.createSpan({ cls: "drawer-explorer-section-count", text: count });
+		}
+	}
+
+	private renderTagContext() {
+		this.tagContextEl.empty();
+		if (!this.tagFocus) {
+			this.tagContextEl.hide();
+			return;
+		}
+		this.tagContextEl.show();
+		const snapshot = this.ensureTagSnapshot();
+		const addChip = (text: string, label: string, remove: () => void) => {
+			const chipEl = this.tagContextEl.createEl("button", {
+				cls: "drawer-explorer-tag-chip",
+				text,
+				attr: { type: "button", "aria-label": label },
+			});
+			const closeEl = chipEl.createSpan({ cls: "drawer-explorer-tag-chip-close" });
+			setIcon(closeEl, "x");
+			chipEl.addEventListener("click", () => {
+				this.preparePointerAction();
+				remove();
+				this.tagSel = 0;
+				this.render();
+				this.drawerEl.focus();
+			});
+		};
+
+		if (this.tagFocus.kind === "untagged") {
+			addChip("Untagged", "Clear Untagged focus", () => {
+				this.tagFocus = null;
+			});
+			return;
+		}
+		const focusNode = snapshot.index.nodes.get(this.tagFocus.id);
+		const focusDisplayPath = focusNode?.displayPath ?? this.tagFocus.id;
+		addChip(`#${focusDisplayPath}`, `Clear #${focusDisplayPath} focus`, () => {
+			this.tagFocus = null;
+			this.tagFilters = [];
+		});
+		for (const id of this.tagFilters) {
+			const node = snapshot.index.nodes.get(id);
+			const displayPath = node?.displayPath ?? id;
+			addChip(`+#${displayPath}`, `Remove #${displayPath} refinement`, () => {
+				this.tagFilters = this.tagFilters.filter((tagId) => tagId !== id);
+			});
+		}
+	}
+
+	private renderTagRow(row: TagLensRow, i: number) {
+		const rowEl = this.listEl.createDiv({ cls: "drawer-explorer-row" });
+		rowEl.dataset.rowIndex = String(i);
+		rowEl.toggleClass("is-selected", i === this.tagSel);
+
+		if (row.kind === "file") {
+			rowEl.addClass("is-result");
+			rowEl.createSpan({ cls: "drawer-explorer-chevron is-blank" });
+			const iconEl = rowEl.createSpan({ cls: "drawer-explorer-icon" });
+			setIcon(iconEl, fileIcon(row.file));
+			rowEl.createSpan({ cls: "drawer-explorer-name", text: row.file.basename });
+			rowEl.addEventListener("click", () => {
+				this.preparePointerAction();
+				this.tagSel = i;
+				void this.openFile(row.file, false);
+			});
+			return;
+		}
+
+		rowEl.addClass("is-tag");
+		if (row.kind === "untagged") {
+			rowEl.createSpan({ cls: "drawer-explorer-chevron is-blank" });
+			const iconEl = rowEl.createSpan({ cls: "drawer-explorer-icon" });
+			setIcon(iconEl, "tags");
+			rowEl.createSpan({ cls: "drawer-explorer-name", text: "Untagged" });
+			rowEl.createSpan({ cls: "drawer-explorer-tag-count", text: String(row.count) });
+			rowEl.addEventListener("click", () => {
+				this.preparePointerAction();
+				this.tagSel = i;
+				this.focusUntagged();
+			});
+			return;
+		}
+
+		const snapshot = this.ensureTagSnapshot();
+		const node = snapshot.index.nodes.get(row.id);
+		if (!node) return;
+		rowEl.style.setProperty("--depth", String(row.depth));
+		rowEl.toggleClass("is-active-filter", this.activeTagIds().includes(row.id));
+		const chevronEl = rowEl.createSpan({
+			cls: row.hasChildren && !this.query.trim() ? "drawer-explorer-chevron" : "drawer-explorer-chevron is-blank",
+		});
+		if (row.hasChildren && !this.query.trim()) {
+			setIcon(chevronEl, "chevron-right");
+			chevronEl.toggleClass("is-expanded", this.activeTagExpansion().has(row.id));
+			chevronEl.addEventListener("click", (event) => {
+				event.stopPropagation();
+				this.preparePointerAction();
+				this.tagSel = i;
+				this.toggleTagExpanded(row.id);
+			});
+		}
+		const iconEl = rowEl.createSpan({ cls: "drawer-explorer-icon" });
+		setIcon(iconEl, this.activeTagIds().includes(row.id) ? "circle-check" : "tag");
+		const label = this.query.trim() ? `#${node.displayPath}` : node.label;
+		rowEl.createSpan({ cls: "drawer-explorer-name", text: label });
+		rowEl.createSpan({ cls: "drawer-explorer-tag-count", text: String(row.count) });
+		rowEl.addEventListener("click", () => {
+			this.preparePointerAction();
+			this.tagSel = i;
+			if (row.section === "refine") this.toggleTagFilter(row.id);
+			else this.focusTag(row.id);
+		});
 	}
 
 	private renderRow(row: Row, i: number) {
@@ -323,6 +872,7 @@ export class Drawer {
 		if (clipOp) rowEl.createSpan({ cls: `drawer-explorer-clip is-${clipOp}`, text: "●" });
 
 		rowEl.addEventListener("click", (e) => {
+			this.preparePointerAction();
 			this.sel = i;
 			if (e.metaKey || e.ctrlKey) {
 				this.toggleMark(row.file.path);
@@ -338,7 +888,7 @@ export class Drawer {
 
 	private renderFooter() {
 		if (!this.footerEl) return;
-		this.footerEl.setText(HINTS[this.mode]);
+		this.footerEl.setText((this.lens === "tags" ? TAG_HINTS : FILE_HINTS)[this.mode]);
 	}
 
 	// ------------------------------------------------------------- preview
@@ -354,7 +904,8 @@ export class Drawer {
 
 	private async updatePreview() {
 		if (!this.isOpen || !this.showPreview) return;
-		const row = this.selectedRow();
+		const row = this.lens === "files" ? this.selectedRow() : null;
+		const tagRow = this.lens === "tags" ? this.selectedTagRow() : null;
 
 		// Each render gets a fresh container + component; swapping them out up
 		// front means a slow async render that finishes late writes into a
@@ -366,6 +917,55 @@ export class Drawer {
 		this.previewContentEl.empty();
 		this.previewContentEl.scrollTop = 0;
 		const container = this.previewContentEl.createDiv();
+
+		if (this.lens === "tags") {
+			if (!tagRow) {
+				this.previewTitleEl.setText("");
+				container.createDiv({ cls: "drawer-explorer-preview-empty", text: "Nothing selected" });
+				return;
+			}
+			if (tagRow.kind === "file") {
+				await this.renderFilePreview(tagRow.file, component, container);
+				return;
+			}
+			if (tagRow.kind === "untagged") {
+				this.previewTitleEl.setText("Untagged");
+				container.createEl("p", {
+					text: `${tagRow.count} indexed ${tagRow.count === 1 ? "note has" : "notes have"} no tags.`,
+				});
+				container.createDiv({
+					cls: "drawer-explorer-preview-empty",
+					text: "Enter follows the collection; Space selects it without opening a note.",
+				});
+				return;
+			}
+
+			const snapshot = this.ensureTagSnapshot();
+			const node = snapshot.index.nodes.get(tagRow.id);
+			if (!node) return;
+			this.previewTitleEl.setText(`#${node.displayPath}`);
+			container.createEl("p", {
+				text: `${tagRow.count} matching ${tagRow.count === 1 ? "note" : "notes"}, including nested tags.`,
+			});
+			container.createDiv({
+				cls: "drawer-explorer-preview-empty",
+				text: tagRow.section === "refine"
+					? "Space toggles this refinement; Enter applies it and follows the matching notes."
+					: "Enter follows this tag's notes; Space selects it and stays in tag navigation.",
+			});
+			const childIds = tagRow.section === "refine" && this.currentTagCounts
+				? node.childIds.filter((id) => (this.currentTagCounts?.get(id) ?? 0) > 0)
+				: node.childIds;
+			if (childIds.length) {
+				container.createDiv({ cls: "drawer-explorer-base-heading", text: "Child tags" });
+				const listEl = container.createEl("ul", { cls: "drawer-explorer-preview-children" });
+				for (const childId of childIds.slice(0, 12)) {
+					const child = snapshot.index.nodes.get(childId);
+					if (child) listEl.createEl("li", { text: `#${child.displayPath}` });
+				}
+			}
+			return;
+		}
 
 		if (!row) {
 			this.previewTitleEl.setText("");
@@ -380,7 +980,10 @@ export class Drawer {
 		}
 
 		if (!(row.file instanceof TFile)) return;
-		const file = row.file;
+		await this.renderFilePreview(row.file, component, container);
+	}
+
+	private async renderFilePreview(file: TFile, component: Component, container: HTMLElement) {
 		this.previewTitleEl.setText(file.name);
 		const provider = this.previews.resolve(file);
 		if (!provider) return;
@@ -404,6 +1007,24 @@ export class Drawer {
 
 	private onKeyDown(e: KeyboardEvent) {
 		if (!this.isOpen) return;
+		const target = e.target as HTMLElement | null;
+		const lensButton = target?.closest<HTMLButtonElement>(".drawer-explorer-lens");
+		if (lensButton && this.drawerEl.contains(lensButton) && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) {
+			const lens = e.key === "Home"
+				? "files"
+				: e.key === "End"
+					? "tags"
+					: lensButton === this.filesLensEl
+						? "tags"
+						: "files";
+			this.setLens(lens);
+			(lens === "files" ? this.filesLensEl : this.tagsLensEl).focus();
+			this.swallow(e);
+			return;
+		}
+		if ((e.key === "Enter" || e.key === " ") && target?.closest("button") && this.drawerEl.contains(target)) {
+			return;
+		}
 
 		if (this.mode === "prompt") {
 			if (e.key === "Escape") {
@@ -434,9 +1055,23 @@ export class Drawer {
 
 		if (this.mode === "filter") {
 			if (e.key === "Escape") {
-				this.setMode("normal");
+				if (this.lens === "tags") {
+					this.query = "";
+					this.filterInputEl.value = "";
+					this.setMode("normal");
+					this.render();
+				} else {
+					this.setMode("normal");
+				}
 			} else if (e.key === "Enter") {
-				this.openSelected(false);
+				if (this.lens === "tags") {
+					this.query = "";
+					this.filterInputEl.value = "";
+					this.setMode("normal");
+					this.activateTagSelection(false);
+				} else {
+					this.openSelected(false);
+				}
 			} else if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "j")) {
 				this.moveSel(1);
 			} else if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "k")) {
@@ -468,6 +1103,7 @@ export class Drawer {
 	}
 
 	private handleNormalKey(e: KeyboardEvent): boolean {
+		if (this.lens === "tags") return this.handleTagKey(e);
 		const key = e.key;
 
 		if (this.pendingG) {
@@ -515,6 +1151,9 @@ export class Drawer {
 				return true;
 			case "o":
 				this.openSelected(true);
+				return true;
+			case "t":
+				this.setLens("tags");
 				return true;
 			case "i":
 			case "/":
@@ -571,13 +1210,245 @@ export class Drawer {
 		}
 	}
 
+	private handleTagKey(e: KeyboardEvent): boolean {
+		const key = e.key;
+		// Explicit navigation wins over a delayed metadata-cache attempt to
+		// restore the active note. Closing or repainting does not.
+		if ([
+			" ", "j", "ArrowDown", "k", "ArrowUp", "g", "G", "h", "ArrowLeft",
+			"l", "ArrowRight", "Enter", "o", "Escape",
+		].includes(key)) {
+			this.cancelTagRestorePreference();
+		}
+		if (this.pendingG) {
+			this.pendingG = false;
+			if (key === "g") {
+				this.setTagSelection(0);
+				return true;
+			}
+		}
+
+		switch (key) {
+			case " ": {
+				const row = this.selectedTagRow();
+				if (row?.kind === "tag") {
+					if (row.section === "refine") this.toggleTagFilter(row.id);
+					else this.focusTag(row.id, false);
+				} else if (row?.kind === "untagged") {
+					this.focusUntagged(false);
+				}
+				return true;
+			}
+			case "j":
+			case "ArrowDown":
+				this.moveSel(1);
+				return true;
+			case "k":
+			case "ArrowUp":
+				this.moveSel(-1);
+				return true;
+			case "g":
+				this.pendingG = true;
+				return true;
+			case "G":
+				this.setTagSelection(this.tagRows.length - 1);
+				return true;
+			case "h":
+			case "ArrowLeft":
+				this.collapseTagOrParent();
+				return true;
+			case "l":
+			case "ArrowRight":
+				this.expandTagOrOpen();
+				return true;
+			case "Enter":
+				this.activateTagSelection(false);
+				return true;
+			case "o": {
+				const row = this.selectedTagRow();
+				if (row?.kind === "file") void this.openFile(row.file, true);
+				return true;
+			}
+			case "i":
+			case "/":
+				this.enterFilter(key === "/");
+				return true;
+			case "t":
+				this.setLens("files");
+				return true;
+			case "P":
+				this.showPreview = !this.showPreview;
+				this.drawerEl.toggleClass("no-preview", !this.showPreview);
+				if (this.showPreview) this.schedulePreview();
+				return true;
+			case "R":
+				this.tagIndexDirty = true;
+				this.render();
+				return true;
+			case "q":
+				this.close();
+				return true;
+			case "Escape":
+				if (this.query.trim()) {
+					this.query = "";
+					this.filterInputEl.value = "";
+					this.tagSel = 0;
+					this.render();
+				} else if (this.tagFilters.length) {
+					this.tagFilters.pop();
+					this.tagSel = 0;
+					this.render();
+				} else if (this.tagFocus) {
+					this.tagFocus = null;
+					this.tagSel = 0;
+					this.render();
+				} else {
+					this.close();
+				}
+				return true;
+			default:
+				return false;
+		}
+	}
+
 	private moveSel(delta: number) {
-		if (!this.rows.length) return;
-		this.sel = Math.max(0, Math.min(this.rows.length - 1, this.sel + delta));
+		if (this.lens === "tags") {
+			this.setTagSelection(this.tagSel + delta);
+			return;
+		} else {
+			if (!this.rows.length) return;
+			this.sel = Math.max(0, Math.min(this.rows.length - 1, this.sel + delta));
+		}
 		this.render();
 	}
 
+	private setTagSelection(index: number) {
+		if (!this.tagRows.length) return;
+		const rowEls = this.listEl.querySelectorAll<HTMLElement>(".drawer-explorer-row[data-row-index]");
+		rowEls[this.tagSel]?.toggleClass("is-selected", false);
+		this.tagSel = Math.max(0, Math.min(this.tagRows.length - 1, index));
+		const selectedEl = rowEls[this.tagSel];
+		selectedEl?.toggleClass("is-selected", true);
+		selectedEl?.scrollIntoView({ block: "nearest" });
+		this.schedulePreview();
+	}
+
 	// ------------------------------------------------------------- navigation
+
+	private toggleTagExpanded(id: string) {
+		const expanded = this.activeTagExpansion();
+		if (expanded.has(id)) expanded.delete(id);
+		else expanded.add(id);
+		this.render();
+	}
+
+	private focusTag(id: string, followNotes = true) {
+		const snapshot = this.ensureTagSnapshot();
+		if (!snapshot.index.nodes.has(id)) return;
+		this.tagFocus = { kind: "tag", id };
+		this.tagFilters = [];
+		this.tagSel = 0;
+		const focusRoot = rootTagId(id);
+		this.tagRefineExpanded = new Set();
+		for (const rootId of snapshot.index.rootIds) {
+			if (rootId !== focusRoot) this.tagRefineExpanded.add(rootId);
+		}
+		if (followNotes) this.selectFirstTagResultAndRender();
+		else this.render();
+	}
+
+	private focusUntagged(followNotes = true) {
+		if (this.tagFocus?.kind === "untagged") {
+			this.tagFocus = null;
+		} else {
+			this.tagFocus = { kind: "untagged" };
+			this.tagFilters = [];
+		}
+		this.tagSel = 0;
+		if (this.tagFocus && followNotes) this.selectFirstTagResultAndRender();
+		else this.render();
+	}
+
+	private toggleTagFilter(id: string) {
+		if (!this.tagFocus) {
+			this.focusTag(id, false);
+			return;
+		}
+		if (this.tagFocus.kind === "untagged") {
+			this.focusTag(id, false);
+			return;
+		}
+		if (id === this.tagFocus.id) {
+			this.tagFocus = null;
+			this.tagFilters = [];
+		} else if (this.tagFilters.includes(id)) {
+			this.tagFilters = this.tagFilters.filter((tagId) => tagId !== id);
+		} else {
+			this.tagFilters.push(id);
+		}
+		this.render();
+	}
+
+	private commitTagRefinement(id: string) {
+		if (!this.tagFocus || this.tagFocus.kind === "untagged") {
+			this.focusTag(id, true);
+			return;
+		}
+		if (id !== this.tagFocus.id && !this.tagFilters.includes(id)) this.tagFilters.push(id);
+		this.selectFirstTagResultAndRender();
+	}
+
+	private selectFirstTagResultAndRender() {
+		this.preferFirstTagResult = true;
+		this.render();
+	}
+
+	private collapseTagOrParent() {
+		const row = this.selectedTagRow();
+		if (row?.kind !== "tag") return;
+		const expanded = this.activeTagExpansion();
+		if (expanded.has(row.id)) {
+			expanded.delete(row.id);
+			this.render();
+			return;
+		}
+		const parentId = this.ensureTagSnapshot().index.nodes.get(row.id)?.parentId;
+		if (!parentId) return;
+		const parentIndex = this.tagRows.findIndex((candidate) => candidate.kind === "tag" && candidate.id === parentId);
+		if (parentIndex >= 0) {
+			this.tagSel = parentIndex;
+			this.render();
+		}
+	}
+
+	private expandTagOrOpen() {
+		const row = this.selectedTagRow();
+		if (!row) return;
+		if (row.kind === "file") {
+			void this.openFile(row.file, false);
+		} else if (row.kind === "tag" && row.hasChildren && !this.query.trim()) {
+			const expanded = this.activeTagExpansion();
+			if (!expanded.has(row.id)) {
+				expanded.add(row.id);
+				this.render();
+				return;
+			}
+			const child = this.tagRows[this.tagSel + 1];
+			if (child?.kind === "tag" && child.section === row.section && child.depth === row.depth + 1) {
+				this.setTagSelection(this.tagSel + 1);
+			}
+		}
+	}
+
+	private activateTagSelection(newTab: boolean) {
+		const row = this.selectedTagRow();
+		if (!row) return;
+		if (row.kind === "file") void this.openFile(row.file, newTab);
+		else if (row.kind === "tag") {
+			if (row.section === "refine") this.commitTagRefinement(row.id);
+			else this.focusTag(row.id, true);
+		} else this.focusUntagged(true);
+	}
 
 	private toggleFolder(folder: TFolder) {
 		if (this.expanded.has(folder.path)) this.expanded.delete(folder.path);

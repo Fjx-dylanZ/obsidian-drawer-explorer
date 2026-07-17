@@ -1,14 +1,16 @@
 # Drawer Explorer
 
-A pop-up file tree for [Obsidian](https://obsidian.md) with modal, vim-style
-navigation and a live preview pane — inspired by the snacks.nvim / neo-tree
-explorer experience. Focus defaults to the tree, not a search bar.
+A pop-up file and tag explorer for [Obsidian](https://obsidian.md) with modal,
+vim-style navigation and a live preview pane — inspired by the snacks.nvim /
+neo-tree explorer experience. Focus defaults to the tree, not a search bar.
 
 - **Modal navigation**: `hjkl` through the tree, `a`/`r`/`d` file operations,
   `x`/`y`/`p` move & copy, `Space` to mark files for bulk operations — no
   mouse required.
-- **Filter like a picker**: `i` focuses the fuzzy filter, `Esc` pops back to
-  normal mode *keeping the results* so you can `j`/`k` through them.
+- **Filter like a picker**: `i` focuses the fuzzy filter. In Files, `Esc` keeps
+  the results for `j`/`k` navigation; in Tags, it returns to the hierarchy.
+- **Tags as a lens**: press `t` to browse nested tags, focus one as a virtual
+  collection, then progressively refine it with co-occurring tags.
 - **Preview pane**: rendered markdown, images, `.canvas` minimaps, `.base`
   summaries — and a small provider API so plugins can add more types.
 - Theme-aware, keyboard-first, works alongside vim plugins such as
@@ -30,6 +32,8 @@ Not yet in the community plugin store. Until then:
   files (or use `OBSIDIAN_PLUGIN_DIR=... npm run install:vault`).
 
 Open it with the `Drawer Explorer: Open drawer` command.
+Use `Drawer Explorer: Open tag lens` when you want a dedicated hotkey that
+opens directly into tags.
 
 ## Keys
 
@@ -39,8 +43,9 @@ Open it with the `Drawer Explorer: Open drawer` command.
 | --- | --- |
 | `j` / `k` | Move selection down / up |
 | `h` | Collapse folder, or jump to parent |
-| `l` / `Enter` | Toggle folder / open file |
-| `o` | Open file in new tab |
+| `l` / `Enter` | Toggle folder / open file in the active tab (replacing its current file) |
+| `o` | Open file in a new tab in the current pane |
+| `t` | Switch to the tag lens |
 | `gg` / `G` | First / last row |
 | `Space` | Mark/unmark item (bulk select; `Ctrl`/`Cmd`-click too) |
 | `a` | New file (`name`), folder (`name/`), or nested path (`a/b/c.md`) |
@@ -54,6 +59,47 @@ Open it with the `Drawer Explorer: Open drawer` command.
 | `Ctrl+d` / `Ctrl+u` | Scroll the preview half a page |
 | `R` | Refresh |
 | `Esc` / `q` | Clear marks → clear filter → close |
+
+### Tag lens
+
+Press `t` in normal mode (or click **Tags**) to switch from physical folders to
+a metadata-backed tag tree. Parent tags include notes from nested descendants,
+matching Obsidian's own tag-search semantics. A note matching several active
+tags appears only once in the **Notes** results.
+
+| Key | Action |
+| --- | --- |
+| `j` / `k` | Move selection down / up |
+| `h` / `l` | Collapse/parent or expand/first child (`l` opens a selected note) |
+| `Enter` | Follow a tag into its notes, commit a refinement, or open a note in the active tab |
+| `Space` | Establish a scope or toggle an AND refinement without opening a note |
+| `o` | Open a selected note in a new tab |
+| `i` / `/` | Fuzzy-filter visible tags and matching note paths |
+| `t` | Return to the file lens |
+| `Esc` | Clear query → remove newest refinement → leave tag scope → close from the root |
+| `q` | In normal mode, close immediately while preserving the current tag browsing context |
+
+Focused tags are shown as chips above the filter. Counts update against the
+current result set, and tag edits made elsewhere in Obsidian refresh the lens
+from the metadata cache. Files whose metadata is still indexing are not
+incorrectly shown as untagged.
+
+Tag navigation is resumable for the current Obsidian session. Reopening the
+drawer restores its scope, refinements, and expansion state. When the active
+note is visible in that scope, the cursor follows it; otherwise the previous
+logical row is restored. Text entered in the fuzzy filter is transient and is
+cleared on close.
+
+Within the **Tags** section, `Enter` establishes a scope and follows its first
+note, while `Space` establishes the scope without opening one and keeps the
+cursor among refinements when any are available. Within **Refine**, `Enter`
+adds the highlighted constraint and follows the resulting notes; `Space`
+toggles it and stays. `l` only moves deeper—it expands a collapsed branch or
+moves to its first child—while `h` owns collapse and parent navigation.
+
+The first tag-lens version is intentionally read-only: file creation,
+rename/delete, and cut/copy/paste remain in the file lens. Tag mutation needs a
+separate workflow because renaming or merging a tag can rewrite many notes.
 
 ### Bulk actions
 
@@ -69,9 +115,11 @@ cut/copy clipboard.
 
 ### Filter mode
 
-Type to fuzzy-match file paths (like a picker). `Ctrl+j`/`Ctrl+k` or arrows move
-the selection, `Enter` opens, `Esc` pops back to normal mode **keeping the
-filtered results** so you can navigate them with `j`/`k`.
+Type to fuzzy-match file paths, or tag and note paths in the tag lens.
+`Ctrl+j`/`Ctrl+k` or arrows move the selection and `Enter` activates it. In the
+file lens, `Esc` pops back to normal mode **keeping the filtered results** so
+you can navigate them with `j`/`k`; in the tag lens it clears the transient
+search and returns to the restored hierarchy.
 
 ## Previews
 

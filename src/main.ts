@@ -1,4 +1,4 @@
-import { Plugin } from "obsidian";
+import { Plugin, TFile, TFolder } from "obsidian";
 import { Drawer } from "./drawer";
 import { PreviewProvider, PreviewRegistry } from "./preview/registry";
 import { fallbackProvider, imageProvider, markdownProvider, textProvider } from "./preview/builtins";
@@ -28,10 +28,45 @@ export default class DrawerExplorerPlugin extends Plugin {
 			name: "Open drawer",
 			callback: () => this.drawer.open(),
 		});
+		this.addCommand({
+			id: "open-tags",
+			name: "Open tag lens",
+			callback: () => this.drawer.openTagLens(),
+		});
 
-		this.registerEvent(this.app.vault.on("create", () => this.drawer.scheduleRefresh()));
-		this.registerEvent(this.app.vault.on("delete", () => this.drawer.scheduleRefresh()));
-		this.registerEvent(this.app.vault.on("rename", () => this.drawer.scheduleRefresh()));
+		this.registerEvent(
+			this.app.vault.on("create", (file) => {
+				if (file instanceof TFile && file.extension.toLowerCase() === "md") this.drawer.invalidateTags();
+				else this.drawer.scheduleRefresh();
+			}),
+		);
+		this.registerEvent(
+			this.app.vault.on("delete", (file) => {
+				if (file instanceof TFolder || (file instanceof TFile && file.extension.toLowerCase() === "md")) {
+					this.drawer.invalidateTags();
+				} else this.drawer.scheduleRefresh();
+			}),
+		);
+		this.registerEvent(
+			this.app.vault.on("rename", (file, oldPath) => {
+				if (
+					file instanceof TFolder ||
+					(file instanceof TFile && file.extension.toLowerCase() === "md") ||
+					oldPath.toLowerCase().endsWith(".md")
+				) {
+					this.drawer.invalidateTags();
+				} else this.drawer.scheduleRefresh();
+			}),
+		);
+		this.registerEvent(
+			this.app.metadataCache.on("changed", (file) => {
+				if (file.extension.toLowerCase() === "md") this.drawer.invalidateTags();
+			}),
+		);
+		this.registerEvent(
+			this.app.metadataCache.on("deleted", () => this.drawer.invalidateTags()),
+		);
+		this.app.workspace.onLayoutReady(() => this.drawer.invalidateTags());
 	}
 
 	onunload() {

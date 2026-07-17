@@ -1,4 +1,5 @@
 node_modules/
 main.js
+.test-dist/
 install-local.sh
 .DS_Store

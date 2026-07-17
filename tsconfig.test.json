@@ -1,0 +1,12 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"module": "CommonJS",
+		"outDir": ".test-dist",
+		"rootDir": ".",
+		"sourceMap": false,
+		"inlineSourceMap": false,
+		"inlineSources": false
+	},
+	"include": ["src/tag-model.ts", "tests/**/*.ts"]
+}
