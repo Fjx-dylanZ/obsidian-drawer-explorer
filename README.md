@@ -5,8 +5,8 @@ vim-style navigation and a live preview pane — inspired by the snacks.nvim /
 neo-tree explorer experience. Focus defaults to the tree, not a search bar.
 
 - **Modal navigation**: `hjkl` through the tree, `a`/`r`/`d` file operations,
-  `x`/`y`/`p` move & copy, `Space` to mark files for bulk operations — no
-  mouse required.
+  `x`/`y`/`p` move & copy, `Space` for individual selection, and `v`/`V` for
+  visual ranges — no mouse required.
 - **Filter like a picker**: `i` focuses the fuzzy filter. In Files, `Esc` keeps
   the results for `j`/`k` navigation; in Tags, it returns to the hierarchy.
 - **Tags as a lens**: press `t` to browse nested tags, focus one as a virtual
@@ -67,7 +67,8 @@ opens directly into tags.
 | `o` | Open file in a new tab in the current pane |
 | `t` | Switch to the tag lens |
 | `gg` / `G` | First / last row |
-| `Space` | Mark/unmark item (bulk select; `Ctrl`/`Cmd`-click too) |
+| `Space` | Select/deselect item (bulk select; `Ctrl`/`Cmd`-click too) |
+| `v` / `V` | Enter Visual mode at the cursor |
 | `a` | New file (`name`), folder (`name/`), or nested path (`a/b/c.md`) |
 | `r` | Rename (link-aware, updates wikilinks) |
 | `d` | Delete (confirm with `y`) |
@@ -78,7 +79,7 @@ opens directly into tags.
 | `P` | Toggle the preview pane |
 | `Ctrl+d` / `Ctrl+u` | Scroll the preview half a page |
 | `R` | Refresh |
-| `Esc` / `q` | Clear marks → clear filter → close |
+| `Esc` / `q` | Clear selection → clear filter → close |
 
 ### Tag lens
 
@@ -121,13 +122,18 @@ The first tag-lens version is intentionally read-only: file creation,
 rename/delete, and cut/copy/paste remain in the file lens. Tag mutation needs a
 separate workflow because renaming or merging a tag can rewrite many notes.
 
-### Bulk actions
+### Selection and bulk actions
 
-Mark items with `Space` (highlighted rows), then `d`/`x`/`y` act on **all
-marked items** instead of the cursor row (`p` pastes the whole set). Marks
-survive filtering, so you can `i`-filter, mark a few results, filter again,
-and mark more — then cut and paste them into one folder. `Esc` clears the
-marks.
+Select items individually with `Space` (highlighted rows), or press `v`/`V` and
+use `j`/`k`/`gg`/`G` to extend an inclusive Visual range. Both controls edit the
+same selection: Visual mode retains existing selected items, updates its range
+as the cursor moves, and returns to Normal with `v`, `V`, or `Esc` while
+keeping the result.
+
+`d`/`x`/`y` act on **all selected items** instead of the cursor row (`p` pastes
+the whole set). Selection survives filtering, so you can `i`-filter, select a
+few results, filter again, and select more — then cut and paste them into one
+folder. In Normal mode, `Esc` clears the selection.
 
 Clipped items show a dot on the right edge — accent for copy, red (plus
 strikethrough) for cut — until pasted. `X`/`Y` takes items back out of the

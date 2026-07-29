@@ -99,7 +99,8 @@ button.drawer-explorer-tag-chip:focus-visible {
 	color: var(--text-muted);
 }
 
-.drawer-explorer.is-filter .drawer-explorer-mode {
+.drawer-explorer.is-filter .drawer-explorer-mode,
+.drawer-explorer.is-visual .drawer-explorer-mode {
 	background-color: var(--interactive-accent);
 	color: var(--text-on-accent);
 }
@@ -395,11 +396,13 @@ button.drawer-explorer-tag-chip:hover {
 	color: var(--text-normal);
 }
 
+
 .drawer-explorer-row.is-selected {
 	background-color: var(--background-modifier-hover);
 	color: var(--text-normal);
 	box-shadow: inset 2px 0 0 var(--interactive-accent);
 }
+
 
 .drawer-explorer-row.is-cut {
 	opacity: 0.5;

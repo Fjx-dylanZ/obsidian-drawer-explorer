@@ -17,8 +17,9 @@ import {
 	matchingDocumentPaths,
 	rootTagId,
 } from "./tag-model";
+import { resolveVisualRange } from "./visual-mode";
 
-type Mode = "normal" | "filter" | "prompt" | "confirm";
+type Mode = "normal" | "visual" | "filter" | "prompt" | "confirm";
 type Lens = "files" | "tags";
 type TagSection = "tags" | "refine" | "notes";
 type TagFocus = { kind: "tag"; id: string } | { kind: "untagged" } | null;
@@ -38,6 +39,7 @@ type TagLensRow =
 const FILE_HINTS: Record<Mode, string> = {
 	normal:
 		"j/k h/l move · space mark · enter/l current tab · o new tab · t tags · a add · r rename · d delete · x/y/p move/copy · i filter · P preview · esc/q close",
+	visual: "j/k/gg/G select · d delete · x cut · y copy · v/V/esc normal",
 	filter: "enter current tab · ↑↓/^j^k move · esc normal",
 	prompt: "enter confirm · esc cancel",
 	confirm: "y confirm · any other key cancels",
@@ -46,6 +48,7 @@ const FILE_HINTS: Record<Mode, string> = {
 const TAG_HINTS: Record<Mode, string> = {
 	normal:
 		"j/k move · h/l collapse/expand · enter follow/open · space toggle/stay · o new tab · t files · i filter · P preview · esc back · q close",
+	visual: "visual mode is available in the file lens",
 	filter: "enter follow/open · ↑↓/^j^k move · esc clear search",
 	prompt: "enter confirm · esc cancel",
 	confirm: "y confirm · any other key cancels",
@@ -80,6 +83,8 @@ export class Drawer {
 	private lens: Lens = "files";
 	private expanded = new Set<string>();
 	private marked = new Set<string>();
+	private visualAnchorPath: string | null = null;
+	private visualBaseMarked: Set<string> | null = null;
 	private sel = 0;
 	private rows: Row[] = [];
 	private tagRows: TagLensRow[] = [];
@@ -187,6 +192,8 @@ export class Drawer {
 		this.query = "";
 		this.filterInputEl.value = "";
 		this.marked.clear();
+		this.visualAnchorPath = null;
+		this.visualBaseMarked = null;
 		this.preferFirstTagResult = false;
 		this.preferActiveTagResult = false;
 		this.mode = "normal";
@@ -257,7 +264,7 @@ export class Drawer {
 		});
 		this.filterInputEl.addEventListener("focus", () => {
 			if (this.lens === "tags") this.cancelTagRestorePreference();
-			if (this.mode === "normal") this.setMode("filter");
+			if (this.mode === "normal" || this.mode === "visual") this.setMode("filter");
 		});
 	}
 
@@ -294,9 +301,14 @@ export class Drawer {
 
 	private setMode(mode: Mode) {
 		this.mode = mode;
+		if (mode !== "visual") {
+			this.visualAnchorPath = null;
+			this.visualBaseMarked = null;
+		}
 		this.modeChipEl?.setText(mode.toUpperCase());
 		this.drawerEl?.toggleClass("is-filter", mode === "filter");
 		this.drawerEl?.toggleClass("is-confirm", mode === "confirm");
+		this.drawerEl?.toggleClass("is-visual", mode === "visual");
 		if (mode === "normal") {
 			this.opRowEl?.hide();
 			this.confirmRowEl?.hide();
@@ -331,7 +343,7 @@ export class Drawer {
 	private preparePointerAction() {
 		this.pendingG = false;
 		if (this.lens === "tags") this.cancelTagRestorePreference();
-		if (this.mode === "filter") this.setMode("normal");
+		if (this.mode === "filter" || this.mode === "visual") this.setMode("normal");
 	}
 
 	private cancelTagRestorePreference() {
@@ -384,10 +396,29 @@ export class Drawer {
 		return row.file.parent ?? this.app.vault.getRoot();
 	}
 
+
+	private startVisual() {
+		const row = this.selectedRow();
+		if (!row) return;
+		this.visualBaseMarked = new Set(this.marked);
+		this.visualAnchorPath = row.file.path;
+		this.pendingG = false;
+		this.setMode("visual");
+		this.render();
+	}
+
+	private syncVisualSelection() {
+		const range = resolveVisualRange(this.rows, this.visualAnchorPath, this.sel);
+		if (!range) return;
+		this.marked.clear();
+		for (const path of this.visualBaseMarked ?? []) this.marked.add(path);
+		for (let i = range.start; i <= range.end; i++) this.marked.add(this.rows[i].file.path);
+	}
+
 	/**
-	 * What a file operation should act on: the marked set when non-empty,
-	 * otherwise the cursor row. Every bulk-capable op (d/x/y) routes through
-	 * this so marks never need special-casing at the call sites.
+	 * What a file operation should act on: the shared selection made with
+	 * Space or Visual mode, falling back to the cursor row. Every bulk-capable
+	 * op (d/x/y) routes through this selection.
 	 */
 	private actionTargets(): TAbstractFile[] {
 		if (this.marked.size) {
@@ -407,7 +438,10 @@ export class Drawer {
 	/** Drop marks whose files no longer exist (deleted or renamed elsewhere). */
 	private pruneMarks() {
 		for (const path of this.marked) {
-			if (!this.app.vault.getAbstractFileByPath(path)) this.marked.delete(path);
+			if (!this.app.vault.getAbstractFileByPath(path)) {
+				this.marked.delete(path);
+				this.visualBaseMarked?.delete(path);
+			}
 		}
 	}
 
@@ -643,11 +677,13 @@ export class Drawer {
 		}
 		this.tagContextEl.hide();
 		this.buildRows();
+		if (this.mode === "visual") this.syncVisualSelection();
 		this.pruneMarks();
 
 		const total = this.app.vault.getFiles().length;
 		const counts = this.query.trim() ? `${this.rows.length}/${total}` : `${total}`;
-		this.countEl.setText(this.marked.size ? `${this.marked.size} marked · ${counts}` : counts);
+		const selection = this.marked.size ? `${this.marked.size} selected` : "";
+		this.countEl.setText(selection ? `${selection} · ${counts}` : counts);
 
 		this.listEl.empty();
 		this.rows.forEach((row, i) => this.renderRow(row, i));
@@ -1094,7 +1130,7 @@ export class Drawer {
 		// let remaining app-level shortcuts (Cmd/Ctrl chords) pass through
 		if (e.metaKey || (e.ctrlKey && !["j", "k"].includes(e.key))) return;
 
-		if (this.handleNormalKey(e)) {
+		if ((this.mode === "visual" ? this.handleVisualKey(e) : this.handleNormalKey(e))) {
 			this.swallow(e);
 		} else if (e.key.length === 1) {
 			// swallow stray printable keys so global handlers don't fire
@@ -1125,6 +1161,10 @@ export class Drawer {
 				}
 				return true;
 			}
+			case "V":
+			case "v":
+				this.startVisual();
+				return true;
 			case "j":
 			case "ArrowDown":
 				this.moveSel(1);
@@ -1209,6 +1249,58 @@ export class Drawer {
 				return false;
 		}
 	}
+	private handleVisualKey(e: KeyboardEvent): boolean {
+		const key = e.key;
+
+		if (this.pendingG) {
+			this.pendingG = false;
+			if (key === "g") {
+				this.sel = 0;
+				this.render();
+				return true;
+			}
+		}
+
+		switch (key) {
+			case "j":
+			case "ArrowDown":
+				this.moveSel(1);
+				return true;
+			case "k":
+			case "ArrowUp":
+				this.moveSel(-1);
+				return true;
+			case "g":
+				this.pendingG = true;
+				return true;
+			case "G":
+				this.sel = this.rows.length - 1;
+				this.render();
+				return true;
+			case "d": {
+				const targets = this.actionTargets();
+				this.confirmDelete(targets);
+				this.render();
+				return true;
+			}
+			case "x":
+			case "y": {
+				const targets = this.actionTargets();
+				this.setMode("normal");
+				this.setClip(key === "x" ? "cut" : "copy", targets);
+				return true;
+			}
+			case "V":
+			case "v":
+			case "Escape":
+				this.setMode("normal");
+				this.render();
+				return true;
+			default:
+				return false;
+		}
+	}
+
 
 	private handleTagKey(e: KeyboardEvent): boolean {
 		const key = e.key;
@@ -1586,8 +1678,7 @@ export class Drawer {
 		});
 	}
 
-	private confirmDelete() {
-		const targets = this.actionTargets();
+	private confirmDelete(targets = this.actionTargets()) {
 		if (!targets.length) return;
 		const label = targets.length === 1 ? `Delete ${targets[0].name}?` : `Delete ${targets.length} items?`;
 		const names = targets.map((f) => (f instanceof TFolder ? `${f.name}/` : f.name));
@@ -1604,8 +1695,7 @@ export class Drawer {
 		);
 	}
 
-	private setClip(op: Clip["op"]) {
-		const targets = this.actionTargets();
+	private setClip(op: Clip["op"], targets = this.actionTargets()) {
 		if (!targets.length) return;
 		let files = targets;
 		if (op === "copy") {

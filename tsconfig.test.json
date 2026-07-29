@@ -8,5 +8,5 @@
 		"inlineSourceMap": false,
 		"inlineSources": false
 	},
-	"include": ["src/tag-model.ts", "tests/**/*.ts"]
+	"include": ["src/tag-model.ts", "src/visual-mode.ts", "tests/**/*.ts"]
 }

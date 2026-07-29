@@ -14,7 +14,7 @@
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-		"test": "tsc -p tsconfig.test.json && node --test .test-dist/tests/tag-model.test.js",
+		"test": "tsc -p tsconfig.test.json && node --test .test-dist/tests/tag-model.test.js .test-dist/tests/visual-mode.test.js",
 		"lint": "eslint src/",
 		"install:vault": "cp manifest.json main.js styles.css \"$OBSIDIAN_PLUGIN_DIR\""
 	},
