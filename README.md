@@ -63,6 +63,7 @@ opens directly into tags.
 | --- | --- |
 | `j` / `k` | Move selection down / up |
 | `h` | Collapse folder, or jump to parent |
+| `Z` | Collapse all folders (cursor moves to its top-level folder) |
 | `l` / `Enter` | Toggle folder / open file in the active tab (replacing its current file) |
 | `o` | Open file in a new tab in the current pane |
 | `t` | Switch to the tag lens |
@@ -92,6 +93,7 @@ tags appears only once in the **Notes** results.
 | --- | --- |
 | `j` / `k` | Move selection down / up |
 | `h` / `l` | Collapse/parent or expand/first child (`l` opens a selected note) |
+| `Z` | Collapse all tags in the current tree (Tags or Refine) |
 | `Enter` | Follow a tag into its notes, commit a refinement, or open a note in the active tab |
 | `Space` | Establish a scope or toggle an AND refinement without opening a note |
 | `o` | Open a selected note in a new tab |
