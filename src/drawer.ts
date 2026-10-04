@@ -38,7 +38,7 @@ type TagLensRow =
 
 const FILE_HINTS: Record<Mode, string> = {
 	normal:
-		"j/k h/l move · space mark · enter/l current tab · o new tab · t tags · a add · r rename · d delete · x/y/p move/copy · i filter · P preview · esc/q close",
+		"j/k h/l move · Z collapse all · space mark · enter/l current tab · o new tab · t tags · a add · r rename · d delete · x/y/p move/copy · i filter · P preview · esc/q close",
 	visual: "j/k/gg/G select · d delete · x cut · y copy · v/V/esc normal",
 	filter: "enter current tab · ↑↓/^j^k move · esc normal",
 	prompt: "enter confirm · esc cancel",
@@ -47,7 +47,7 @@ const FILE_HINTS: Record<Mode, string> = {
 
 const TAG_HINTS: Record<Mode, string> = {
 	normal:
-		"j/k move · h/l collapse/expand · enter follow/open · space toggle/stay · o new tab · t files · i filter · P preview · esc back · q close",
+		"j/k move · h/l collapse/expand · Z collapse all · enter follow/open · space toggle/stay · o new tab · t files · i filter · P preview · esc back · q close",
 	visual: "visual mode is available in the file lens",
 	filter: "enter follow/open · ↑↓/^j^k move · esc clear search",
 	prompt: "enter confirm · esc cancel",
@@ -1184,6 +1184,9 @@ export class Drawer {
 			case "ArrowLeft":
 				this.collapseOrParent();
 				return true;
+			case "Z":
+				this.collapseAll();
+				return true;
 			case "l":
 			case "ArrowRight":
 			case "Enter":
@@ -1308,7 +1311,7 @@ export class Drawer {
 		// restore the active note. Closing or repainting does not.
 		if ([
 			" ", "j", "ArrowDown", "k", "ArrowUp", "g", "G", "h", "ArrowLeft",
-			"l", "ArrowRight", "Enter", "o", "Escape",
+			"l", "ArrowRight", "Z", "Enter", "o", "Escape",
 		].includes(key)) {
 			this.cancelTagRestorePreference();
 		}
@@ -1348,6 +1351,9 @@ export class Drawer {
 			case "h":
 			case "ArrowLeft":
 				this.collapseTagOrParent();
+				return true;
+			case "Z":
+				this.collapseAllTags();
 				return true;
 			case "l":
 			case "ArrowRight":
@@ -1513,6 +1519,19 @@ export class Drawer {
 		}
 	}
 
+	private collapseAllTags() {
+		if (this.query.trim()) return;
+		const row = this.selectedTagRow();
+		this.activeTagExpansion().clear();
+		// buildTagRows re-expands the cursor tag's ancestors, so park on its root first
+		if (row?.kind === "tag") {
+			const rootId = rootTagId(row.id);
+			const rootIndex = this.tagRows.findIndex((candidate) => candidate.kind === "tag" && candidate.id === rootId);
+			if (rootIndex >= 0) this.tagSel = rootIndex;
+		}
+		this.render();
+	}
+
 	private expandTagOrOpen() {
 		const row = this.selectedTagRow();
 		if (!row) return;
@@ -1560,6 +1579,16 @@ export class Drawer {
 			}
 		}
 		this.render();
+	}
+
+	private collapseAll() {
+		if (this.query.trim()) return;
+		const row = this.selectedRow();
+		this.expanded.clear();
+		let top: TAbstractFile | undefined = row?.file;
+		while (top?.parent && !top.parent.isRoot()) top = top.parent;
+		if (top) this.focusPath(top.path);
+		else this.render();
 	}
 
 	private expandOrOpen(newTab: boolean) {
