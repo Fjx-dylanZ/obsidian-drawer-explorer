@@ -52,9 +52,10 @@ export function buildFilterRows(app: App, query: string, cap = FILTER_RESULT_CAP
 	const search = prepareFuzzySearch(query);
 	const scored: { file: TFile; nameMatch: boolean; score: number }[] = [];
 	for (const file of app.vault.getFiles()) {
+		const pathMatch = search(file.path);
+		if (!pathMatch) continue;
 		const nameMatch = search(file.basename);
-		const match = nameMatch ?? search(file.path);
-		if (match) scored.push({ file, nameMatch: nameMatch !== null, score: match.score });
+		scored.push({ file, nameMatch: nameMatch !== null, score: (nameMatch ?? pathMatch).score });
 	}
 	scored.sort((a, b) => Number(b.nameMatch) - Number(a.nameMatch) || b.score - a.score);
 	return scored.slice(0, cap).map(({ file }) => ({ file, depth: 0 }));
