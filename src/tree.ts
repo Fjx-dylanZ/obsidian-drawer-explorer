@@ -47,14 +47,16 @@ export function buildTreeRows(root: TFolder, expanded: ReadonlySet<string>): Row
 	return rows;
 }
 
-/** Fuzzy-match all vault files against a query, best matches first. */
+/** Fuzzy-match all vault files against a query, file-name matches first, then best score. */
 export function buildFilterRows(app: App, query: string, cap = FILTER_RESULT_CAP): Row[] {
 	const search = prepareFuzzySearch(query);
-	const scored: { file: TFile; score: number }[] = [];
+	const scored: { file: TFile; nameMatch: boolean; score: number }[] = [];
 	for (const file of app.vault.getFiles()) {
-		const match = search(file.path);
-		if (match) scored.push({ file, score: match.score });
+		const pathMatch = search(file.path);
+		if (!pathMatch) continue;
+		const nameMatch = search(file.basename);
+		scored.push({ file, nameMatch: nameMatch !== null, score: (nameMatch ?? pathMatch).score });
 	}
-	scored.sort((a, b) => b.score - a.score);
+	scored.sort((a, b) => Number(b.nameMatch) - Number(a.nameMatch) || b.score - a.score);
 	return scored.slice(0, cap).map(({ file }) => ({ file, depth: 0 }));
 }
