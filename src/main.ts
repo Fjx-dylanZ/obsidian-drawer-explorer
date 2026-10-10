@@ -1,4 +1,5 @@
 import { Plugin, TFile, TFolder } from "obsidian";
+import { DEFAULT_SETTINGS, DrawerExplorerSettings, DrawerExplorerSettingTab } from "./settings";
 import { Drawer } from "./drawer";
 import { PreviewProvider, PreviewRegistry } from "./preview/registry";
 import { fallbackProvider, imageProvider, markdownProvider, textProvider } from "./preview/builtins";
@@ -10,8 +11,12 @@ export type { PreviewContext, PreviewProvider } from "./preview/registry";
 export default class DrawerExplorerPlugin extends Plugin {
 	drawer!: Drawer;
 	previews!: PreviewRegistry;
+	settings: DrawerExplorerSettings = { ...DEFAULT_SETTINGS };
 
 	async onload() {
+		this.settings = { ...DEFAULT_SETTINGS, ...((await this.loadData()) as Partial<DrawerExplorerSettings> | null) };
+		this.addSettingTab(new DrawerExplorerSettingTab(this.app, this));
+
 		this.previews = new PreviewRegistry();
 		// order matters: first canPreview() match wins, fallback goes last
 		this.previews.register(markdownProvider);
@@ -67,6 +72,10 @@ export default class DrawerExplorerPlugin extends Plugin {
 			this.app.metadataCache.on("deleted", () => this.drawer.invalidateTags()),
 		);
 		this.app.workspace.onLayoutReady(() => this.drawer.invalidateTags());
+	}
+
+	async saveSettings() {
+		await this.saveData(this.settings);
 	}
 
 	onunload() {

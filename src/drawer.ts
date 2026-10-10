@@ -162,7 +162,8 @@ export class Drawer {
 		if (this.lens === "files") this.revealActiveFile();
 		this.setMode("normal");
 		this.render();
-		this.drawerEl.focus();
+		if (this.plugin.settings.startInInsertMode) this.enterFilter(false);
+		else this.drawerEl.focus();
 	}
 
 	openTagLens() {
