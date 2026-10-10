@@ -55,6 +55,9 @@ Open it with the `Drawer Explorer: Open drawer` command.
 Use `Drawer Explorer: Open tag lens` when you want a dedicated hotkey that
 opens directly into tags.
 
+To type a file name right away, turn on **Start in insert mode** in the plugin
+settings. The drawer then opens with the filter focused.
+
 ## Keys
 
 ### Normal mode (default)
