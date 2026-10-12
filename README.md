@@ -143,7 +143,10 @@ cut/copy clipboard.
 
 ### Filter mode
 
-Type to fuzzy-match file paths, or tag and note paths in the tag lens.
+Type to fuzzy-match file paths, or tag and note paths in the tag lens. Results
+where the query appears in fewer pieces rank first; among those, matches in the
+file name (or a tag's last segment) come before matches only in its folders or
+parent tags.
 `Ctrl+j`/`Ctrl+k` or arrows move the selection and `Enter` activates it. In the
 file lens, `Esc` pops back to normal mode **keeping the filtered results** so
 you can navigate them with `j`/`k`; in the tag lens it clears the transient
