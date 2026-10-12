@@ -1,6 +1,6 @@
 import { App, Component, Notice, TAbstractFile, TFile, TFolder, prepareFuzzySearch, setIcon } from "obsidian";
 import type DrawerExplorerPlugin from "./main";
-import { Row, buildFilterRows, buildTreeRows, fileIcon } from "./tree";
+import { NameOrPathMatch, Row, buildFilterRows, buildTreeRows, compareNameOrPathMatches, fileIcon, matchNameOrPath } from "./tree";
 import { Clip, createEntry, pasteInto, renameWithin, trashPaths } from "./vault-ops";
 import { PreviewRegistry } from "./preview/registry";
 import { renderFolderSummary } from "./preview/builtins";
@@ -520,17 +520,17 @@ export class Drawer {
 
 		if (query) {
 			const search = prepareFuzzySearch(query);
-			const tagMatches: { id: string; score: number; count: number }[] = [];
+			const tagMatches: { id: string; match: NameOrPathMatch; count: number }[] = [];
 			if (this.tagFocus?.kind !== "untagged") {
 				for (const node of index.nodes.values()) {
 					if (excludedRoot && rootTagId(node.id) === excludedRoot) continue;
 					const count = counts ? (counts.get(node.id) ?? 0) : node.matchingFilePaths.size;
 					if (counts && count === 0) continue;
-					const match = search(`#${node.displayPath}`);
-					if (match) tagMatches.push({ id: node.id, score: match.score, count });
+					const match = matchNameOrPath(search, node.label, `#${node.displayPath}`);
+					if (match) tagMatches.push({ id: node.id, match, count });
 				}
 			}
-			tagMatches.sort((a, b) => b.score - a.score);
+			tagMatches.sort((a, b) => compareNameOrPathMatches(a.match, b.match));
 			this.tagTreeTruncated = tagMatches.length > FILTER_RESULT_CAP;
 			for (const match of tagMatches.slice(0, FILTER_RESULT_CAP)) {
 				rows.push({
@@ -593,21 +593,21 @@ export class Drawer {
 		const fileScope = resultPaths ?? (query ? new Set(index.documents.keys()) : null);
 		if (fileScope) {
 			const search = query ? prepareFuzzySearch(query) : null;
-			const matches: { file: TFile; score: number }[] = [];
+			const matches: { file: TFile; match: NameOrPathMatch | null }[] = [];
 			for (const path of fileScope) {
 				const file = this.app.vault.getAbstractFileByPath(path);
 				if (!(file instanceof TFile)) continue;
-				const match = search?.(file.path);
+				const match = search ? matchNameOrPath(search, file.basename, file.path) : null;
 				if (search && !match) continue;
-				matches.push({ file, score: match?.score ?? 0 });
+				matches.push({ file, match });
 			}
-			matches.sort((a, b) => {
-				if (search && a.score !== b.score) return b.score - a.score;
-				return a.file.basename.localeCompare(b.file.basename, undefined, {
+			matches.sort((a, b) =>
+				(a.match && b.match ? compareNameOrPathMatches(a.match, b.match) : 0) ||
+				a.file.basename.localeCompare(b.file.basename, undefined, {
 					sensitivity: "base",
 					numeric: true,
-				});
-			});
+				}),
+			);
 			this.visibleTagNoteCount = matches.length;
 			this.tagNotesTruncated = matches.length > FILTER_RESULT_CAP;
 			const visibleMatches = matches.slice(0, FILTER_RESULT_CAP);

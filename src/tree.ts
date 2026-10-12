@@ -1,4 +1,4 @@
-import { App, TAbstractFile, TFile, TFolder, prepareFuzzySearch } from "obsidian";
+import { App, SearchResult, TAbstractFile, TFile, TFolder, prepareFuzzySearch } from "obsidian";
 import { FILTER_RESULT_CAP } from "./utils";
 
 export interface Row {
@@ -47,16 +47,50 @@ export function buildTreeRows(root: TFolder, expanded: ReadonlySet<string>): Row
 	return rows;
 }
 
-/** Fuzzy-match all vault files against a query, file-name matches first, then best score. */
+export interface NameOrPathMatch {
+	/** Number of separate matched fragments; 1 means the query appears contiguously. */
+	ranges: number;
+	nameMatch: boolean;
+	/** Score of the name match when there is one, otherwise of the path match. */
+	score: number;
+	/** Breaks ties between equal names in different places (`index`, `#type/review` vs `#status/review`). */
+	pathScore: number;
+}
+
+/**
+ * Fuzzy-match an item by its name, falling back to its full path. `name` must be
+ * part of `path`, so an item whose path does not match cannot match by name.
+ */
+export function matchNameOrPath(
+	search: (text: string) => SearchResult | null,
+	name: string,
+	path: string,
+): NameOrPathMatch | null {
+	const pathMatch = search(path);
+	if (!pathMatch) return null;
+	const nameMatch = search(name);
+	const best = nameMatch ?? pathMatch;
+	return { ranges: best.matches.length, nameMatch: nameMatch !== null, score: best.score, pathScore: pathMatch.score };
+}
+
+/** Tighter matches first; at equal tightness name matches beat path-only matches, then score, then path score. */
+export function compareNameOrPathMatches(a: NameOrPathMatch, b: NameOrPathMatch): number {
+	return (
+		a.ranges - b.ranges ||
+		Number(b.nameMatch) - Number(a.nameMatch) ||
+		b.score - a.score ||
+		b.pathScore - a.pathScore
+	);
+}
+
+/** Fuzzy-match all vault files against a query, ranked by `compareNameOrPathMatches`. */
 export function buildFilterRows(app: App, query: string, cap = FILTER_RESULT_CAP): Row[] {
 	const search = prepareFuzzySearch(query);
-	const scored: { file: TFile; nameMatch: boolean; score: number }[] = [];
+	const scored: { file: TFile; match: NameOrPathMatch }[] = [];
 	for (const file of app.vault.getFiles()) {
-		const pathMatch = search(file.path);
-		if (!pathMatch) continue;
-		const nameMatch = search(file.basename);
-		scored.push({ file, nameMatch: nameMatch !== null, score: (nameMatch ?? pathMatch).score });
+		const match = matchNameOrPath(search, file.basename, file.path);
+		if (match) scored.push({ file, match });
 	}
-	scored.sort((a, b) => Number(b.nameMatch) - Number(a.nameMatch) || b.score - a.score);
+	scored.sort((a, b) => compareNameOrPathMatches(a.match, b.match));
 	return scored.slice(0, cap).map(({ file }) => ({ file, depth: 0 }));
 }
